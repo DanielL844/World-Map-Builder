@@ -18,6 +18,7 @@ import { showTextModal } from './modal';
 import { Menu } from './menu';
 import { encodeProject, decodeProject, idb, type ProjectData } from './storage';
 import { tools, isBrush, isLineTool, isDrawTool } from './tools';
+import { registerPwaUpdates } from './pwa';
 
 const WORLD = { widthKm: 4000, heightKm: 2500 };
 let vMax = WORLD.heightKm / WORLD.widthKm;
@@ -363,9 +364,6 @@ void idb.get('autosave').then((s) => {
   else applyPlanet();
 });
 
-// Register the service worker only in the built (production) app — keeps dev clean.
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => { }); });
-}
+registerPwaUpdates();
 
 function showError(msg: string): void { const d = document.createElement('div'); d.className = 'fatal'; d.textContent = 'Could not start WorldForge: ' + msg; document.body.appendChild(d); }

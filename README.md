@@ -13,7 +13,38 @@ Built in tested milestones rather than one throwaway file.
   its own window, an icon, and works offline after the first load.
 
 From a terminal instead: `npm install`, then `npm run dev` (editing) or `npm run app` (installable).
-Phone: `start.bat` also prints a **Network:** address — open it on the same Wi-Fi (desktop install is the reliable one).
+Phone: the local **Network:** address is useful for same-Wi-Fi testing, but real phone install/update should use a
+hosted `https://` URL. Most phone browsers will not install a PWA from `http://192.168...`.
+
+## Install on your phone
+
+This repo includes a GitHub Pages deploy workflow in `.github/workflows/deploy-pages.yml`.
+
+1. Push the repo to GitHub on the `main` branch.
+2. In the GitHub repo, open **Settings > Pages** and set **Build and deployment > Source** to **GitHub Actions**.
+3. Push a change to `main`, or run the **Deploy WorldForge** workflow manually from the **Actions** tab.
+4. When the workflow finishes, open the Pages `https://...` URL on your phone.
+5. Install it:
+   - **Android Chrome:** menu > **Install app** or **Add to Home screen**.
+   - **iPhone Safari:** Share > **Add to Home Screen**.
+
+The installed app keeps working offline after the first successful load.
+
+## Update the installed app
+
+Make changes locally, then run:
+
+```
+npm run build
+npm test
+git add .
+git commit -m "Describe the change"
+git push
+```
+
+GitHub Pages rebuilds `dist/` on each push to `main`. The production build generates a fresh service worker cache, so
+installed copies detect the new version. When the app shows **Update ready**, tap **Reload**. If the phone keeps showing
+the old version, fully close and reopen the installed app once.
 
 ## What it does
 
@@ -44,7 +75,8 @@ src/vectors.ts     vector store + geometry (unit-tested)
 src/overlay.ts     Canvas2D vectors, world boundary, brush ring
 src/storage.ts     gzip + project encode/decode + resample + IndexedDB (unit-tested)
 src/menu.ts / toolbar.ts / modal.ts / interaction.ts / camera.ts / gl.ts / hud.ts
-public/            manifest.webmanifest, sw.js, icon.svg (PWA)
+scripts/generate-sw.mjs   generates the production service worker after each build
+public/            manifest.webmanifest + icons (PWA)
 ```
 
 ## Verify
