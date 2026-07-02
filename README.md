@@ -46,6 +46,10 @@ GitHub Pages rebuilds `dist/` on each push to `main`. The production build gener
 installed copies detect the new version. When the app shows **Update ready**, tap **Reload**. If the phone keeps showing
 the old version, fully close and reopen the installed app once.
 
+If the deploy sits at `deployment_queued` until it times out, re-check **Settings > Pages** and confirm **Source** is
+**GitHub Actions**, then rerun the workflow. The workflow uses current Node 24 GitHub Actions, so Node deprecation
+warnings are not expected after this update.
+
 ## What it does
 
 - **Terrain:** GPU continents, sea level, hill-shading, biome coloring; continuous deep zoom with fractal detail
