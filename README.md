@@ -21,10 +21,12 @@ hosted `https://` URL. Most phone browsers will not install a PWA from `http://1
 This repo includes a GitHub Pages deploy workflow in `.github/workflows/deploy-pages.yml`.
 
 1. Push the repo to GitHub on the `main` branch.
-2. In the GitHub repo, open **Settings > Pages** and set **Build and deployment > Source** to **GitHub Actions**.
-3. Push a change to `main`, or run the **Deploy WorldForge** workflow manually from the **Actions** tab.
-4. When the workflow finishes, open the Pages `https://...` URL on your phone.
-5. Install it:
+2. Push a change to `main`, or run the **Deploy WorldForge** workflow manually from the **Actions** tab.
+3. The workflow builds `dist/` and publishes it to a `gh-pages` branch.
+4. In the GitHub repo, open **Settings > Pages** and set **Build and deployment > Source** to **Deploy from a branch**,
+   then select **Branch: gh-pages** and **Folder: /(root)**.
+5. When GitHub shows the Pages `https://...` URL, open it on your phone.
+6. Install it:
    - **Android Chrome:** menu > **Install app** or **Add to Home screen**.
    - **iPhone Safari:** Share > **Add to Home Screen**.
 
@@ -42,13 +44,13 @@ git commit -m "Describe the change"
 git push
 ```
 
-GitHub Pages rebuilds `dist/` on each push to `main`. The production build generates a fresh service worker cache, so
-installed copies detect the new version. When the app shows **Update ready**, tap **Reload**. If the phone keeps showing
-the old version, fully close and reopen the installed app once.
+GitHub Pages publishes the `gh-pages` branch after each push to `main`. The production build generates a fresh service
+worker cache, so installed copies detect the new version. When the app shows **Update ready**, tap **Reload**. If the
+phone keeps showing the old version, fully close and reopen the installed app once.
 
-If the deploy sits at `deployment_queued` until it times out, re-check **Settings > Pages** and confirm **Source** is
-**GitHub Actions**, then rerun the workflow. The workflow uses current Node 24 GitHub Actions, so Node deprecation
-warnings are not expected after this update.
+This workflow avoids the GitHub Actions Pages deployment poller because that path can sit at `deployment_queued` until
+it times out. If the workflow succeeds but the site URL does not update, re-check **Settings > Pages** and confirm
+**Source: Deploy from a branch**, **Branch: gh-pages**, and **Folder: /(root)**.
 
 ## What it does
 
