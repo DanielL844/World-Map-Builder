@@ -119,14 +119,28 @@ describe('downsampleIntoQuadrant', () => {
 });
 
 describe('upsampleFromAncestor', () => {
-  it('replicates the covering ancestor block into the child (nearest 2x)', () => {
+  it('interpolates bilinearly between ancestor texels (2x, texel-center aligned)', () => {
     const a = new Float32Array(TILE * TILE);
     a[0] = 5; a[1] = 9;                                  // ancestor texels (0,0)=5, (1,0)=9
     const child = new Float32Array(TILE * TILE);
     upsampleFromAncestor({ level: 1, tx: 0, ty: 0 }, 0, a, child);
-    expect(child[0]).toBeCloseTo(5); expect(child[1]).toBeCloseTo(5);  // (0,0) -> 2x2 block
-    expect(child[TILE]).toBeCloseTo(5); expect(child[TILE + 1]).toBeCloseTo(5);
-    expect(child[2]).toBeCloseTo(9);                                   // next ancestor texel
+    // child texel x maps to ancestor coordinate (x+0.5)/2-0.5: -0.25, 0.25, 0.75, 1.25...
+    expect(child[0]).toBeCloseTo(5);                     // clamped at the tile edge
+    expect(child[1]).toBeCloseTo(6);                     // 5 + 0.25*(9-5)
+    expect(child[2]).toBeCloseTo(8);                     // 5 + 0.75*(9-5)
+    // no nearest-style block replication: values step smoothly, not in 2x2 constant blocks
+    expect(child[1]).not.toBeCloseTo(child[2]);
+  });
+
+  it('is smooth across the seeded gradient (no repeated blocks)', () => {
+    const a = new Float32Array(TILE * TILE);
+    for (let x = 0; x < TILE; x++) a[x] = x;             // linear ramp along row 0
+    const child = new Float32Array(TILE * TILE);
+    upsampleFromAncestor({ level: 2, tx: 1, ty: 0 }, 0, a, child); // 4x upsample, interior region
+    // a linear ramp must upsample to a linear ramp: constant per-texel step of 1/4
+    for (let x = 1; x < TILE - 1; x++) {
+      expect(child[x + 1] - child[x]).toBeCloseTo(0.25, 3);
+    }
   });
 
   it('picks the ancestor sub-region for the child position', () => {
@@ -134,7 +148,10 @@ describe('upsampleFromAncestor', () => {
     a[TILE >> 1] = 7;                                    // ancestor texel (128,0), in the right half
     const child = new Float32Array(TILE * TILE);
     upsampleFromAncestor({ level: 1, tx: 1, ty: 0 }, 0, a, child);  // child tx=1 covers ancestor x 128..255
-    expect(child[0]).toBeCloseTo(7);
+    // child texel 0 samples ancestor x=127.75 -> weight 0.75 on texel 128 (=7), 0.25 on 127 (=0)
+    expect(child[0]).toBeCloseTo(0.75 * 7);
+    // child texel 1 samples ancestor x=128.25 -> weight 0.75 on texel 128, 0.25 on 129 (=0)
+    expect(child[1]).toBeCloseTo(0.75 * 7);
   });
 
   it('fills a constant ancestor across 4x upsample', () => {
@@ -147,9 +164,9 @@ describe('upsampleFromAncestor', () => {
 
   it('handles a large depth gap (child smaller than one ancestor texel)', () => {
     const a = new Float32Array(TILE * TILE);
-    a[1] = 42;                                          // ancestor texel (1,0)
+    a[0] = 42; a[1] = 42; a[2] = 42;                    // constant neighborhood around texel (1,0)
     const child = new Float32Array(TILE * TILE);
-    upsampleFromAncestor({ level: 10, tx: 4, ty: 0 }, 0, a, child); // child maps entirely into texel (1,0)
+    upsampleFromAncestor({ level: 10, tx: 4, ty: 0 }, 0, a, child); // child maps inside texel (1,0)
     expect(child[0]).toBeCloseTo(42);
     expect(child[TILE * TILE - 1]).toBeCloseTo(42);
   });

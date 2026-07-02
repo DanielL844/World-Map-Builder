@@ -87,20 +87,42 @@ export function downsampleIntoQuadrant(parent: Float32Array, child: Float32Array
   }
 }
 
-// Nearest-upsample the region of a coarser ancestor (at `aLevel`) that covers child tile `c`
+// Bilinear-upsample the region of a coarser ancestor (at `aLevel`) that covers child tile `c`
 // into `out` (TILE x TILE). Used to seed a freshly-created finer tile with the coarse height
 // beneath it, so detail painted into it builds ON the coarse edit instead of resetting to base.
+// Samples at texel centers with clamp-to-edge, matching the GPU's LINEAR magnification of the
+// ancestor tile — so a seeded child is indistinguishable from the coarse tile it covers.
+// (Nearest replication here rendered as blocky 2^d-texel squares with hard seams at tile edges.)
 export function upsampleFromAncestor(c: TileCoord, aLevel: number, aData: Float32Array, out: Float32Array): void {
   const d = c.level - aLevel;
   if (d <= 0) { out.set(aData); return; }
-  // Map each child texel to an ancestor texel via the global ancestor-level texel grid, so it
-  // works for any depth gap (including d > 8, where the whole child is sub-texel in the ancestor).
-  const gx0 = c.tx * TILE, gy0 = c.ty * TILE;           // child's global ancestor-level texel origin
+  // Map child texel centers onto the ancestor's texel grid via the global texel grids of the two
+  // levels, so it works for any depth gap (including d > 8, where the whole child is sub-texel
+  // in the ancestor and bilinear degenerates to interpolating one texel neighborhood).
+  const inv = 1 / (1 << d);
+  const gx0 = c.tx * TILE, gy0 = c.ty * TILE;           // child's global texel origin (child level)
   const baseX = (c.tx >> d) * TILE, baseY = (c.ty >> d) * TILE; // ancestor tile's global origin
+  // Precompute per-column sample indices and weights (shared by every row).
+  const cx0 = new Int32Array(TILE), cx1 = new Int32Array(TILE), cfx = new Float32Array(TILE);
+  for (let x = 0; x < TILE; x++) {
+    const ax = (gx0 + x + 0.5) * inv - baseX - 0.5;     // ancestor-local texel-center coordinate
+    const i0 = Math.floor(ax);
+    cfx[x] = ax - i0;
+    cx0[x] = i0 < 0 ? 0 : i0;                            // clamp-to-edge (matches CLAMP_TO_EDGE)
+    cx1[x] = i0 + 1 > TILE - 1 ? TILE - 1 : i0 + 1;
+  }
   for (let y = 0; y < TILE; y++) {
-    const row = (((gy0 + y) >> d) - baseY) * TILE;
+    const ay = (gy0 + y + 0.5) * inv - baseY - 0.5;
+    const j0 = Math.floor(ay);
+    const fy = ay - j0;
+    const r0 = (j0 < 0 ? 0 : j0) * TILE;
+    const r1 = (j0 + 1 > TILE - 1 ? TILE - 1 : j0 + 1) * TILE;
+    const row = y * TILE;
     for (let x = 0; x < TILE; x++) {
-      out[y * TILE + x] = aData[row + (((gx0 + x) >> d) - baseX)];
+      const fx = cfx[x], x0 = cx0[x], x1 = cx1[x];
+      const top = aData[r0 + x0] + (aData[r0 + x1] - aData[r0 + x0]) * fx;
+      const bot = aData[r1 + x0] + (aData[r1 + x1] - aData[r1 + x0]) * fx;
+      out[row + x] = top + (bot - top) * fy;
     }
   }
 }
