@@ -1,0 +1,19 @@
+{
+  "name": "worldforge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local GPU-rendered deep-zoom world map builder (Milestone 1: terrain foundation)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "app": "vite build && vite preview --host --port 4173"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8",
+    "vitest": "^2.1.1"
+  }
+}
