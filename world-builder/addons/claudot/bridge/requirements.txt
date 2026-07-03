@@ -1,0 +1,7 @@
+# Claudot bridge daemon dependencies
+# agent_bridge.py (chat bridge: Claude Agent SDK + direct API providers)
+claude-agent-sdk>=0.1.0
+anyio>=4.0.0
+httpx>=0.27.0
+# godot_mcp_server.py (standalone MCP server for Claude Code)
+fastmcp>=3.0.0

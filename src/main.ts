@@ -125,7 +125,7 @@ function interp(p: { u: number; v: number; pressure: number }, fn: (u: number, v
 attachInteraction(canvas, cam, {
   minScale, maxScale,
   captures: () => isDrawTool(tools.tool),
-  fingerDraw: () => false,
+  fingerDraw: () => tools.fingerDraw,
   onPaintStart: (p) => {
     const t = tools.tool;
     if (isBrush(t)) {
@@ -316,7 +316,8 @@ function clampView(): void {
 let pending = false;
 let lastFrameT = 0;
 const perfEl = document.createElement('div');
-perfEl.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:7;background:rgba(11,15,20,.6);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:3px 8px;font:11px ui-monospace,monospace;color:#9fe6b0;pointer-events:none';
+perfEl.id = 'perf';
+perfEl.style.cssText ='position:fixed;left:10px;bottom:10px;z-index:7;background:rgba(11,15,20,.6);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:3px 8px;font:11px ui-monospace,monospace;color:#9fe6b0;pointer-events:none';
 document.body.appendChild(perfEl);
 function requestRender(): void { pendingOverlay = false; if (!pending) { pending = true; requestAnimationFrame(frame); } }
 let pendingOverlay = false;

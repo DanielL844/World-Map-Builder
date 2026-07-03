@@ -1,3 +1,5 @@
+import { tools, setFingerDraw } from './tools';
+
 interface MenuOptions {
   getWorld: () => { widthKm: number; heightKm: number };
   onApplyWorld: (widthKm: number, heightKm: number) => void;
@@ -26,6 +28,8 @@ export class Menu {
       <div class="menu-row"><label>Width (km)</label><input id="m-w" type="number" min="1" step="any"></div>
       <div class="menu-row"><label>Height (km)</label><input id="m-h" type="number" min="1" step="any"></div>
       <div class="menu-actions"><button class="btn apply">Apply size</button></div>
+      <h3>Input</h3>
+      <div class="menu-row"><label for="m-finger">Draw with one finger (two fingers pan/zoom)</label><input id="m-finger" type="checkbox"></div>
       <h3>Generate</h3>
       <div class="menu-actions">
         <button class="btn primary preset-planet">Planet (realistic)</button>
@@ -49,6 +53,8 @@ export class Menu {
     this.wIn = back.querySelector('#m-w') as HTMLInputElement;
     this.hIn = back.querySelector('#m-h') as HTMLInputElement;
     const file = back.querySelector('#m-file') as HTMLInputElement;
+    const finger = back.querySelector('#m-finger') as HTMLInputElement;
+    finger.addEventListener('change', () => setFingerDraw(finger.checked));
     const on = (sel: string, fn: () => void) => (back.querySelector(sel) as HTMLButtonElement).addEventListener('click', fn);
 
     back.addEventListener('pointerdown', (e) => { if (e.target === back) this.close(); });
@@ -69,6 +75,7 @@ export class Menu {
   open(): void {
     const w = this.opts.getWorld();
     this.wIn.value = String(w.widthKm); this.hIn.value = String(w.heightKm);
+    (this.back.querySelector('#m-finger') as HTMLInputElement).checked = tools.fingerDraw;
     this.back.style.display = 'flex';
   }
   close(): void { this.back.style.display = 'none'; }

@@ -1,0 +1,8 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Claudot
+.mcp.json
+addons/claudot/bridge/.env
+.claude/settings.local.json
