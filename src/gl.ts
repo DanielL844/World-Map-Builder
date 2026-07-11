@@ -21,16 +21,23 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
 export function program(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram {
   const p = gl.createProgram();
   if (!p) throw new Error('createProgram failed');
-  const v = compile(gl, gl.VERTEX_SHADER, vs);
-  const f = compile(gl, gl.FRAGMENT_SHADER, fs);
-  gl.attachShader(p, v);
-  gl.attachShader(p, f);
-  gl.linkProgram(p);
-  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
-    const log = gl.getProgramInfoLog(p);
-    throw new Error('Program link error: ' + log);
+  let v: WebGLShader | null = null;
+  let f: WebGLShader | null = null;
+  try {
+    v = compile(gl, gl.VERTEX_SHADER, vs);
+    f = compile(gl, gl.FRAGMENT_SHADER, fs);
+    gl.attachShader(p, v);
+    gl.attachShader(p, f);
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      throw new Error('Program link error: ' + gl.getProgramInfoLog(p));
+    }
+    return p;
+  } catch (err) {
+    gl.deleteProgram(p);
+    throw err;
+  } finally {
+    if (v) gl.deleteShader(v);
+    if (f) gl.deleteShader(f);
   }
-  gl.deleteShader(v);
-  gl.deleteShader(f);
-  return p;
 }

@@ -19,14 +19,12 @@ import { Menu } from './menu';
 import { encodeProject, decodeProject, idb, type ProjectData } from './storage';
 import { tools, isBrush, isLineTool, isDrawTool } from './tools';
 import { registerPwaUpdates } from './pwa';
+import { LatestTaskQueue } from './latestTaskQueue';
 
 const WORLD = { widthKm: 4000, heightKm: 2500 };
 let vMax = WORLD.heightKm / WORLD.widthKm;
 const EDIT_TEXELS = 4096;
 const BIOME_TEXELS = 2048;
-// Past this zoom, a tile level resolves finer than the region EditLayer, so sculpting routes
-// into the deep tile pyramid (M7.3). Smallest level L with TILE*2^L > EDIT_TEXELS.
-const DEEP_MIN_LEVEL = Math.floor(Math.log2(EDIT_TEXELS / TILE)) + 1;
 const BASE_LAND = 0.5; // default flat-plain height (blank canvas)
 const EXPORT_MAX = 4096;
 
@@ -60,8 +58,8 @@ const vectors = new VectorStore();
 
 const cam: Camera = { x: 0, y: 0, scale: 1 };
 let hoverU = 0.5, hoverV = vMax / 2, hoverSX = -1, hoverSY = -1;
-const minScale = Math.min(window.innerWidth, window.innerHeight / vMax) * 0.4;
 const maxScale = 256 * Math.pow(2, 12);
+function minimumScale(): number { return Math.min(window.innerWidth, window.innerHeight / vMax) * 0.4; }
 function fit(): void {
   const s = Math.min(window.innerWidth, window.innerHeight / vMax) * 0.9;
   cam.scale = s; cam.x = (window.innerWidth - s) / 2; cam.y = (window.innerHeight - s * vMax) / 2;
@@ -104,6 +102,9 @@ let strokeLevel = 0;                            // tile level for a deep stroke
 // Detail level from a STABLE scale (not the adaptive render DPR) so the level a stroke paints
 // into always matches the level the compositor draws, with no DPR-jitter mismatch.
 function detailLevel(): number { return levelForScale(cam.scale * DPR, tileLayer.maxLevel); }
+// Smallest non-negative level L whose TILE*2^L grid is finer than the live region field.
+// edit.W can shrink on tall worlds or GPUs with a lower MAX_TEXTURE_SIZE.
+function deepMinLevel(): number { return Math.max(0, Math.floor(Math.log2(edit.W / TILE)) + 1); }
 function stampHeight(u: number, v: number, pressure: number): void {
   const rU = tools.brushPx / cam.scale;
   const amount = (0.0035 + tools.strength * 0.02) * pressure, rate = 0.12 + tools.strength * 0.5;
@@ -123,7 +124,7 @@ function interp(p: { u: number; v: number; pressure: number }, fn: (u: number, v
 }
 
 attachInteraction(canvas, cam, {
-  minScale, maxScale,
+  minScale: minimumScale, maxScale,
   captures: () => isDrawTool(tools.tool),
   fingerDraw: () => tools.fingerDraw,
   onPaintStart: (p) => {
@@ -131,7 +132,7 @@ attachInteraction(canvas, cam, {
     if (isBrush(t)) {
       drawMode = 'height';
       const L = detailLevel();
-      if (L >= DEEP_MIN_LEVEL && tileLayer.ok) { heightTarget = 'tiles'; strokeLevel = L; tileLayer.beginStroke(); }
+      if (L >= deepMinLevel() && tileLayer.ok) { heightTarget = 'tiles'; strokeLevel = L; tileLayer.beginStroke(); }
       else { heightTarget = 'edit'; edit.beginStroke(); }
       lastU = p.u; lastV = p.v; stampHeight(p.u, p.v, p.pressure);
     }
@@ -151,9 +152,9 @@ attachInteraction(canvas, cam, {
   onPaintEnd: () => {
     if (drawMode === 'height') {
       if (heightTarget === 'tiles') { if (tileLayer.endStroke()) record('tiles'); }
-      else { edit.endStroke(); record('height'); }
+      else if (edit.endStroke()) record('height');
     }
-    else if (drawMode === 'biome') { biome.endStroke(); record('biome'); }
+    else if (drawMode === 'biome') { if (biome.endStroke()) record('biome'); }
     else if (drawMode === 'line') { if (vectors.endLine()) record('vector'); }
     drawMode = 'none'; requestRender();
   },
@@ -186,7 +187,9 @@ function currentProject(): ProjectData {
   };
 }
 let saveTimer = 0;
+let persistenceReady = false;
 function autosave(): void {
+  if (!persistenceReady) return;
   clearTimeout(saveTimer);
   saveTimer = window.setTimeout(() => {
     if ('requestIdleCallback' in window) window.requestIdleCallback(() => { void doAutosave(); }, { timeout: 4000 });
@@ -194,8 +197,18 @@ function autosave(): void {
   }, 2000);
 }
 let saveWorker: Worker | null = null;
+const fallbackSaves = new LatestTaskQueue<ProjectData>(
+  async (project) => { await idb.set('autosave', await encodeProject(project)); },
+  (error) => { console.warn('autosave failed', error); },
+);
 try { saveWorker = new Worker(new URL('./autosaveWorker.ts', import.meta.url), { type: 'module' }); } catch { saveWorker = null; }
+saveWorker?.addEventListener('error', (event) => {
+  console.warn('autosave worker failed; using the main thread', event);
+  const failedWorker = saveWorker; saveWorker = null; failedWorker?.terminate();
+  flushAutosave();
+});
 async function doAutosave(): Promise<void> {
+  if (!persistenceReady) return;
   try {
     if (saveWorker) {
       const e = edit.floatCopy();
@@ -205,10 +218,13 @@ async function doAutosave(): Promise<void> {
         { world: { widthKm: WORLD.widthKm, heightKm: WORLD.heightKm }, sea: hud.sea, relief: hud.relief,
           view: { x: cam.x, y: cam.y, scale: cam.scale }, vectors: vectors.toJSON(), edit: e, biome: b, tiles: t },
         [e.data.buffer, b.data.buffer, t.coords.buffer, t.data.buffer]);
-    } else {
-      await idb.set('autosave', await encodeProject(currentProject()));
-    }
+    } else fallbackSaves.enqueue(currentProject());
   } catch (e) { console.warn('autosave failed', e); }
+}
+function flushAutosave(): void {
+  if (!persistenceReady) return;
+  clearTimeout(saveTimer); saveTimer = 0;
+  void doAutosave();
 }
 
 function restore(p: ProjectData): void {
@@ -225,11 +241,15 @@ function restore(p: ProjectData): void {
 }
 function applyWorld(wKm: number, hKm: number): void {
   const oldE = edit.serialize(), oldB = biome.serialize();
+  const oldVMax = vMax, hadDeepEdits = tileLayer.hasEdits();
   WORLD.widthKm = Math.max(1, wKm); WORLD.heightKm = Math.max(1, hKm); vMax = WORLD.heightKm / WORLD.widthKm;
   edit.dispose(); edit = new EditLayer(gl, EDIT_TEXELS, vMax); edit.loadInt16(oldE.height, oldE.w, oldE.h);
   biome.dispose(); biome = new BiomeLayer(gl, BIOME_TEXELS, vMax); biome.loadBytes(oldB.data, oldB.w, oldB.h);
-  tileLayer.clear();
-  hud.setWidthKm(WORLD.widthKm); fit(); requestRender(); autosave(); toast('World resized');
+  const sameAspect = Math.abs(vMax - oldVMax) <= Number.EPSILON * Math.max(1, Math.abs(vMax), Math.abs(oldVMax));
+  if (!sameAspect) tileLayer.clear();
+  actionLog.length = 0; redoLog.length = 0; syncUndo();
+  hud.setWidthKm(WORLD.widthKm); fit(); requestRender(); autosave();
+  toast(!sameAspect && hadDeepEdits ? 'World resized; deep sculpt detail reset' : 'World resized');
 }
 function newWorld(): void {
   edit.dispose(); edit = new EditLayer(gl, EDIT_TEXELS, vMax);
@@ -246,13 +266,13 @@ function applyPreset(kind: PresetKind): void {
   toast(kind === 'flat' ? 'Flat plain' : kind === 'islands' ? 'Islands' : 'Continents');
 }
 const PLANET_KM = 40000; // ~Earth circumference; a whole planet, equirectangular (sphere 2:1)
-function applyPlanet(): void {
+function applyPlanet(): Promise<void> {
   toast('Generating planet…');
-  setTimeout(() => {
+  return new Promise((resolve) => window.setTimeout(() => {
     WORLD.widthKm = PLANET_KM; WORLD.heightKm = PLANET_KM / 2; vMax = 0.5; // poles at top/bottom edges
     edit.dispose(); edit = new EditLayer(gl, EDIT_TEXELS, vMax);
     biome.dispose(); biome = new BiomeLayer(gl, BIOME_TEXELS, vMax);
-    const bw = BIOME_TEXELS, bh = Math.max(1, Math.round(BIOME_TEXELS * vMax));
+    const bw = biome.W, bh = biome.H;
     const p = generatePlanet(edit.W, edit.H, bw, bh, vMax, (Math.random() * 1e9) | 0, BASE_LAND, { seaLevel: hud.sea });
     edit.setData(p.height);
     biome.loadBytes(p.biome, bw, bh);
@@ -261,7 +281,8 @@ function applyPlanet(): void {
     hud.setWidthKm(WORLD.widthKm);
     actionLog.length = 0; redoLog.length = 0; syncUndo(); fit(); requestRender(); autosave();
     toast('Generated planet');
-  }, 30);
+    resolve();
+  }, 30));
 }
 async function saveFile(): Promise<void> { download(new Blob([await encodeProject(currentProject())], { type: 'application/json' }), 'worldmap.wfmap.json'); toast('Saved'); }
 async function loadFile(file: File): Promise<void> { try { restore(await decodeProject(await file.text())); autosave(); toast('Loaded'); } catch (e) { console.warn(e); toast('Could not read file'); } }
@@ -309,7 +330,14 @@ function download(blob: Blob, name: string): void {
 
 // ---- render ----
 function clampView(): void {
-  const cw = window.innerWidth, ch = window.innerHeight, sw = cam.scale, sh = cam.scale * vMax, fx = 0.35;
+  const cw = window.innerWidth, ch = window.innerHeight;
+  const scale = clamp(cam.scale, minimumScale(), maxScale);
+  if (scale !== cam.scale) {
+    const center = screenToWorld(cam, cw / 2, ch / 2);
+    cam.scale = scale;
+    cam.x = cw / 2 - center.u * scale; cam.y = ch / 2 - center.v * scale;
+  }
+  const sw = cam.scale, sh = cam.scale * vMax, fx = 0.35;
   const minX = cw * (1 - fx) - sw, maxX = cw * fx; cam.x = minX > maxX ? (cw - sw) / 2 : clamp(cam.x, minX, maxX);
   const minY = ch * (1 - fx) - sh, maxY = ch * fx; cam.y = minY > maxY ? (ch - sh) / 2 : clamp(cam.y, minY, maxY);
 }
@@ -333,6 +361,10 @@ function overlayFrame(): void {
 function frame(): void {
   const _t0 = performance.now();
   pending = false; clampView();
+  if (hoverSX >= 0) {
+    const hover = screenToWorld(cam, hoverSX, hoverSY);
+    hoverU = hover.u; hoverV = hover.v;
+  }
   const cw = window.innerWidth, ch = window.innerHeight, w = Math.round(cw * dynDPR), h = Math.round(ch * dynDPR);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; canvas.style.width = cw + 'px'; canvas.style.height = ch + 'px'; }
   overlay.resize(cw, ch, DPR);
@@ -357,13 +389,35 @@ function toast(msg: string): void {
 }
 
 window.addEventListener('resize', requestRender);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushAutosave();
+});
+window.addEventListener('pagehide', flushAutosave);
 fit(); updateCursor();
 if (!edit.mipmaps) console.warn('EXT_color_buffer_float unavailable: sculpt footprint will be coarser when zoomed out.');
 requestRender();
-void idb.get('autosave').then((s) => {
-  if (s) decodeProject(s).then(restore).catch((e) => { console.warn('restore failed', e); applyPlanet(); });
-  else applyPlanet();
-});
+void initializeProject();
+
+async function initializeProject(): Promise<void> {
+  let restored = false;
+  try {
+    const saved = await idb.get('autosave');
+    if (saved) {
+      try { restore(await decodeProject(saved)); restored = true; }
+      catch (e) { console.warn('restore failed', e); }
+    }
+  } catch (e) {
+    console.warn('autosave lookup failed', e);
+  }
+  try {
+    if (!restored) await applyPlanet();
+  } finally {
+    // Do not let a lifecycle flush overwrite an existing save with the blank startup fields
+    // while IndexedDB/decompression is still restoring them.
+    persistenceReady = true;
+    autosave();
+  }
+}
 
 registerPwaUpdates();
 

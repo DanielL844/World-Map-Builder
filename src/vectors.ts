@@ -115,7 +115,15 @@ export class VectorStore {
     return true;
   }
 
-  toJSON(): VectorData { return { lines: this.lines, labels: this.labels, towns: this.towns }; }
+  // Return a stable snapshot. Encoding can be asynchronous (gzip/IndexedDB), so exposing the
+  // live arrays here could let edits made during a save leak into an older project snapshot.
+  toJSON(): VectorData {
+    return {
+      lines: this.lines.map((line) => ({ ...line, pts: line.pts.map((p) => ({ ...p })) })),
+      labels: this.labels.map((label) => ({ ...label, at: { ...label.at } })),
+      towns: this.towns.map((town) => ({ ...town, at: { ...town.at } })),
+    };
+  }
   load(d: VectorData): void {
     this.lines = d.lines || []; this.labels = d.labels || []; this.towns = d.towns || [];
     this.undoStack = []; this.redoStack = []; this.temp = null;

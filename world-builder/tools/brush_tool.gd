@@ -88,7 +88,10 @@ func _apply() -> void:
 	var center := camera.get_global_mouse_position()
 	var ctile := Vector2i(floori(center.x / ts), floori(center.y / ts))
 
-	var affected := {}
+	# Resolve the whole dab against one stable world snapshot before writing it.
+	# Smooth otherwise becomes scan-order dependent because later tiles see the
+	# neighbors already changed earlier in the same dab.
+	var changes := {} # Vector2i world tile -> new tile id
 	for dy in range(-radius, radius + 1):
 		for dx in range(-radius, radius + 1):
 			if dx * dx + dy * dy > radius * radius:
@@ -97,11 +100,15 @@ func _apply() -> void:
 			var ty := ctile.y + dy
 			if tx < 0 or ty < 0 or tx >= wt.x or ty >= wt.y:
 				continue
+			var current_id := world.get_tile_world(tx, ty)
 			var new_id := _new_tile_for(tx, ty)
-			if new_id < 0:
+			if new_id < 0 or new_id == current_id:
 				continue
-			affected[world.set_tile_world(tx, ty, new_id)] = true
+			changes[Vector2i(tx, ty)] = new_id
 
+	var affected := {}
+	for tile in changes:
+		affected[world.set_tile_world(tile.x, tile.y, changes[tile])] = true
 	for cc in affected.keys():
 		renderer.rerender_chunk(cc)
 

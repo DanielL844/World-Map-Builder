@@ -44,4 +44,39 @@ describe('storage', () => {
     const up = resampleField(src, 2, 2, 3, 2);
     expect(up[0]).toBe(0); expect(up[2]).toBe(100); expect(up[1]).toBe(50); // midpoint interpolation
   });
+
+  it('rejects invalid world and view values before they reach the renderer', async () => {
+    const raw = JSON.parse(await encodeProject(sample()));
+    raw.world.widthKm = 0;
+    await expect(decodeProject(JSON.stringify(raw))).rejects.toThrow('Invalid world width');
+
+    raw.world.widthKm = 4000;
+    raw.view.scale = Number.NaN;
+    await expect(decodeProject(JSON.stringify(raw))).rejects.toThrow('Invalid view scale');
+  });
+
+  it('rejects truncated field and tile payloads', async () => {
+    const field = JSON.parse(await encodeProject(sample()));
+    field.edit.comp = false;
+    field.edit.gz = btoa(String.fromCharCode(0, 0));
+    await expect(decodeProject(JSON.stringify(field))).rejects.toThrow('Invalid edit payload length');
+
+    const tiles = JSON.parse(await encodeProject(sample()));
+    tiles.tiles.n += 1;
+    await expect(decodeProject(JSON.stringify(tiles))).rejects.toThrow('Invalid tile coordinates payload length');
+  });
+
+  it('rejects tile coordinates the renderer cannot address', async () => {
+    const badLevel = sample(); badLevel.tiles!.coords[0] = 19;
+    await expect(encodeProject(badLevel)).rejects.toThrow('Invalid tile level');
+
+    const badX = sample(); badX.tiles!.coords[1] = 2 ** badX.tiles!.coords[0];
+    await expect(encodeProject(badX)).rejects.toThrow('Invalid tile coordinates');
+
+    const badY = sample(); badY.tiles!.coords[2] = Math.ceil((badY.world.heightKm / badY.world.widthKm) * (2 ** badY.tiles!.coords[0]));
+    await expect(encodeProject(badY)).rejects.toThrow('Invalid tile coordinates');
+
+    const badFlag = sample(); badFlag.tiles!.coords[3] = 2;
+    await expect(encodeProject(badFlag)).rejects.toThrow('Invalid tile direct flag');
+  });
 });

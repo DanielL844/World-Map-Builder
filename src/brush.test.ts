@@ -21,13 +21,21 @@ describe('paintDab', () => {
     for (let i = 0; i < up.length; i++) expect(dn[i]).toBeCloseTo(-up[i]);
   });
 
-  it('smooth pulls a spike toward its neighbors', () => {
+  it('smooth uses a stable source and stays symmetric around a spike', () => {
     const W = 8, H = 8;
     const d = new Float32Array(W * H);
     d[4 * W + 4] = 1.0; // lone spike
     paintDab(d, W, H, 'smooth', 4, 4, 2, 0, 1);
-    expect(d[4 * W + 4]).toBeLessThan(1.0);
-    expect(d[4 * W + 4]).toBeGreaterThan(0);
+    expect(d[4 * W + 4]).toBe(0);
+    const neighbors = [d[4 * W + 3], d[4 * W + 5], d[3 * W + 4], d[5 * W + 4]];
+    expect(neighbors[0]).toBeGreaterThan(0);
+    for (const n of neighbors.slice(1)) expect(n).toBeCloseTo(neighbors[0]);
+  });
+
+  it('returns null when a dab does not change the field', () => {
+    const d = new Float32Array(8 * 8);
+    expect(paintDab(d, 8, 8, 'raise', 4, 4, 2, 0, 0)).toBeNull();
+    expect(paintDab(d, 8, 8, 'smooth', 4, 4, 2, 0, 1)).toBeNull();
   });
 
   it('growRect unions rectangles', () => {

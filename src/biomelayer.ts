@@ -17,8 +17,15 @@ export class BiomeLayer {
   private redoStack: { r: Rect; before: Uint8Array; after: Uint8Array }[] = [];
 
   constructor(gl: WebGL2RenderingContext, widthTexels: number, vMax: number) {
-    this.gl = gl; this.W = widthTexels; this.vMax = vMax;
-    this.H = Math.max(1, Math.round(widthTexels * vMax));
+    if (!Number.isFinite(widthTexels) || widthTexels <= 0 || !Number.isFinite(vMax) || vMax <= 0) {
+      throw new Error('BiomeLayer dimensions must be positive and finite');
+    }
+    this.gl = gl; this.vMax = vMax;
+    const requested = Math.max(1, Math.floor(widthTexels));
+    const reportedMax = Number(gl.getParameter(gl.MAX_TEXTURE_SIZE));
+    const maxSide = Math.max(1, Math.min(requested, Number.isFinite(reportedMax) && reportedMax > 0 ? Math.floor(reportedMax) : requested));
+    this.W = vMax > 1 ? Math.max(1, Math.floor(maxSide / vMax)) : maxSide;
+    this.H = Math.max(1, Math.min(maxSide, Math.round(this.W * vMax)));
     this.data = new Uint8Array(this.W * this.H * 4);
     this.before = new Uint8Array(this.W * this.H * 4);
     const tex = gl.createTexture();
@@ -36,8 +43,8 @@ export class BiomeLayer {
   texture(): WebGLTexture { return this.tex; }
   dispose(): void { this.gl.deleteTexture(this.tex); }
 
-  private txOf(u: number): number { return u * this.W; }
-  private tyOf(v: number): number { return (v / this.vMax) * this.H; }
+  private txOf(u: number): number { return u * this.W - 0.5; }
+  private tyOf(v: number): number { return (v / this.vMax) * this.H - 0.5; }
 
   beginStroke(): void { this.before.set(this.data); this.strokeRect = null; }
   dab(color: [number, number, number] | null, u: number, v: number, rU: number, strength: number): void {
@@ -45,15 +52,25 @@ export class BiomeLayer {
     if (rect) {
       this.dirty = growRect(this.dirty, rect.x0, rect.y0, rect.x1, rect.y1);
       this.strokeRect = growRect(this.strokeRect, rect.x0, rect.y0, rect.x1, rect.y1);
+      // The texture is sampled through mipmaps while zoomed out. Rebuild them on the next frame
+      // during a drag so the stroke appears live rather than only after pointer-up.
+      this.needMip = true;
     }
   }
-  endStroke(): void {
+  endStroke(): boolean {
     const r = this.strokeRect; this.strokeRect = null;
-    if (!r) return;
-    this.undoStack.push({ r, before: this.copyRegion(this.before, r), after: this.copyRegion(this.data, r) });
+    if (!r) return false;
+    const before = this.copyRegion(this.before, r);
+    const after = this.copyRegion(this.data, r);
+    let changed = false;
+    for (let i = 0; i < before.length; i++) {
+      if (before[i] !== after[i]) { changed = true; break; }
+    }
+    if (!changed) return false;
+    this.undoStack.push({ r, before, after });
     if (this.undoStack.length > 30) this.undoStack.shift();
     this.redoStack.length = 0;
-    this.needMip = true;
+    return true;
   }
 
   private copyRegion(src: Uint8Array, r: Rect): Uint8Array {
@@ -76,7 +93,8 @@ export class BiomeLayer {
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.W, this.H, gl.RGBA, gl.UNSIGNED_BYTE, this.data);
     gl.generateMipmap(gl.TEXTURE_2D);
-    this.dirty = null; this.undoStack = []; this.redoStack = [];
+    this.dirty = null; this.needMip = false; this.strokeRect = null;
+    this.undoStack = []; this.redoStack = [];
   }
 
   flush(): void {

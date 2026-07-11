@@ -1,3 +1,4 @@
+import { MAX_TILE_LEVEL, TILE } from './tilestore';
 import type { VectorData } from './vectors';
 
 export interface ProjectData {
@@ -9,10 +10,12 @@ export interface ProjectData {
   vectors: VectorData;
   edit: { w: number; h: number; height: Int16Array }; // quantized height deltas
   biome: { w: number; h: number; data: Uint8Array };  // RGBA biome paint
-  tiles?: { coords: Int32Array; data: Int16Array };   // deep-zoom tile edits (M7): 3 ints + TILE^2 Int16 per tile
+  tiles?: { coords: Int32Array; data: Int16Array };   // deep-zoom edits: 4 coord ints + TILE^2 Int16 per tile
 }
 
-const HAS_CS = typeof CompressionStream !== 'undefined';
+const CAN_COMPRESS = typeof CompressionStream !== 'undefined';
+const CAN_DECOMPRESS = typeof DecompressionStream !== 'undefined';
+const TILE_SAMPLES = TILE * TILE;
 
 function bytesToB64(b: Uint8Array): string {
   let s = ''; const CH = 0x8000;
@@ -25,58 +28,146 @@ function b64ToBytes(s: string): Uint8Array {
   return b;
 }
 async function gzip(b: Uint8Array): Promise<Uint8Array> {
-  if (!HAS_CS) return b;
+  if (!CAN_COMPRESS) return b;
   const cs = new CompressionStream('gzip');
   const w = cs.writable.getWriter(); void w.write(b as unknown as BufferSource); void w.close();
   return new Uint8Array(await new Response(cs.readable).arrayBuffer());
 }
 async function gunzip(b: Uint8Array): Promise<Uint8Array> {
-  if (!HAS_CS) return b;
+  if (!CAN_DECOMPRESS) throw new Error('This browser cannot decompress this project');
   const ds = new DecompressionStream('gzip');
   const w = ds.writable.getWriter(); void w.write(b as unknown as BufferSource); void w.close();
   return new Uint8Array(await new Response(ds.readable).arrayBuffer());
 }
 
+function positiveInt(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`Invalid ${label}`);
+  }
+  return value;
+}
+
+function nonnegativeInt(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Invalid ${label}`);
+  }
+  return value;
+}
+
+function finiteNumber(value: unknown, label: string, positive = false): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || (positive && value <= 0)) {
+    throw new Error(`Invalid ${label}`);
+  }
+  return value;
+}
+
+function exactLength(label: string, actual: number, factors: number[]): void {
+  let expected = 1;
+  for (const factor of factors) {
+    expected *= factor;
+    if (!Number.isSafeInteger(expected)) throw new Error(`Invalid ${label} dimensions`);
+  }
+  if (actual !== expected) throw new Error(`Invalid ${label} payload length`);
+}
+
+function validateTileCoordinates(coords: Int32Array, worldVMax: number): void {
+  for (let i = 0; i < coords.length; i += 4) {
+    const level = coords[i], tx = coords[i + 1], ty = coords[i + 2], direct = coords[i + 3];
+    if (level < 0 || level > MAX_TILE_LEVEL) throw new Error('Invalid tile level');
+    const columns = 2 ** level;
+    const rows = Math.ceil(worldVMax * columns);
+    if (!Number.isSafeInteger(rows) || rows < 1) throw new Error('Invalid world aspect');
+    if (tx < 0 || tx >= columns || ty < 0 || ty >= rows) throw new Error('Invalid tile coordinates');
+    if (direct !== 0 && direct !== 1) throw new Error('Invalid tile direct flag');
+  }
+}
+
 export async function encodeProject(p: ProjectData): Promise<string> {
+  if (p.version !== 1) throw new Error('Unsupported project version');
+  const worldWidth = finiteNumber(p.world.widthKm, 'world width', true);
+  const worldHeight = finiteNumber(p.world.heightKm, 'world height', true);
+  const worldVMax = worldHeight / worldWidth;
+  if (!Number.isFinite(worldVMax) || worldVMax <= 0) throw new Error('Invalid world aspect');
+  const editW = positiveInt(p.edit.w, 'edit width'), editH = positiveInt(p.edit.h, 'edit height');
+  const biomeW = positiveInt(p.biome.w, 'biome width'), biomeH = positiveInt(p.biome.h, 'biome height');
+  exactLength('edit', p.edit.height.byteLength, [editW, editH, Int16Array.BYTES_PER_ELEMENT]);
+  exactLength('biome', p.biome.data.byteLength, [biomeW, biomeH, 4]);
   const hb = new Uint8Array(p.edit.height.buffer, p.edit.height.byteOffset, p.edit.height.byteLength);
   const gz = await gzip(hb);
   const gzB = await gzip(p.biome.data);
   let tiles: unknown = undefined;
-  if (p.tiles && p.tiles.coords.length > 0) {
-    const cb = new Uint8Array(p.tiles.coords.buffer, p.tiles.coords.byteOffset, p.tiles.coords.byteLength);
-    const db = new Uint8Array(p.tiles.data.buffer, p.tiles.data.byteOffset, p.tiles.data.byteLength);
-    tiles = { n: p.tiles.coords.length / 4, comp: HAS_CS, coords: bytesToB64(await gzip(cb)), data: bytesToB64(await gzip(db)) };
+  if (p.tiles) {
+    if (p.tiles.coords.length % 4 !== 0) throw new Error('Invalid tile coordinate count');
+    const n = p.tiles.coords.length / 4;
+    exactLength('tile data', p.tiles.data.byteLength, [n, TILE_SAMPLES, Int16Array.BYTES_PER_ELEMENT]);
+    validateTileCoordinates(p.tiles.coords, worldVMax);
+    if (n > 0) {
+      const cb = new Uint8Array(p.tiles.coords.buffer, p.tiles.coords.byteOffset, p.tiles.coords.byteLength);
+      const db = new Uint8Array(p.tiles.data.buffer, p.tiles.data.byteOffset, p.tiles.data.byteLength);
+      tiles = { n, comp: CAN_COMPRESS, coords: bytesToB64(await gzip(cb)), data: bytesToB64(await gzip(db)) };
+    }
   }
   return JSON.stringify({
     version: p.version, world: p.world, sea: p.sea, relief: p.relief, view: p.view, vectors: p.vectors,
-    edit: { w: p.edit.w, h: p.edit.h, comp: HAS_CS, gz: bytesToB64(gz) },
-    biome: { w: p.biome.w, h: p.biome.h, comp: HAS_CS, gz: bytesToB64(gzB) },
+    edit: { w: p.edit.w, h: p.edit.h, comp: CAN_COMPRESS, gz: bytesToB64(gz) },
+    biome: { w: p.biome.w, h: p.biome.h, comp: CAN_COMPRESS, gz: bytesToB64(gzB) },
     tiles,
   });
 }
 export async function decodeProject(str: string): Promise<ProjectData> {
   const o = JSON.parse(str);
+  if (o.version !== 1) throw new Error('Unsupported project version');
+  const world = {
+    widthKm: finiteNumber(o.world?.widthKm, 'world width', true),
+    heightKm: finiteNumber(o.world?.heightKm, 'world height', true),
+  };
+  const worldVMax = world.heightKm / world.widthKm;
+  if (!Number.isFinite(worldVMax) || worldVMax <= 0) throw new Error('Invalid world aspect');
+  const sea = finiteNumber(o.sea, 'sea level');
+  const relief = finiteNumber(o.relief, 'relief');
+  const view = o.view === undefined ? undefined : {
+    x: finiteNumber(o.view?.x, 'view x'),
+    y: finiteNumber(o.view?.y, 'view y'),
+    scale: finiteNumber(o.view?.scale, 'view scale', true),
+  };
+  const editW = positiveInt(o.edit?.w, 'edit width');
+  const editH = positiveInt(o.edit?.h, 'edit height');
   let bytes = b64ToBytes(o.edit.gz);
   if (o.edit.comp) bytes = await gunzip(bytes);
+  exactLength('edit', bytes.byteLength, [editW, editH, Int16Array.BYTES_PER_ELEMENT]);
   const copy = bytes.slice(); // tightly packed, offset 0
   const height = new Int16Array(copy.buffer, 0, Math.floor(copy.byteLength / 2));
   let bdata = new Uint8Array(0);
-  if (o.biome && o.biome.gz) { let bb = b64ToBytes(o.biome.gz); if (o.biome.comp) bb = await gunzip(bb); bdata = new Uint8Array(bb); }
+  let biomeW = 0, biomeH = 0;
+  if (o.biome !== undefined && o.biome !== null) {
+    biomeW = positiveInt(o.biome.w, 'biome width');
+    biomeH = positiveInt(o.biome.h, 'biome height');
+    let bb = b64ToBytes(o.biome.gz); if (o.biome.comp) bb = await gunzip(bb);
+    exactLength('biome', bb.byteLength, [biomeW, biomeH, 4]);
+    bdata = new Uint8Array(bb);
+  }
   let tiles: ProjectData['tiles'] = undefined;
-  if (o.tiles && o.tiles.n > 0) {
-    let cb = b64ToBytes(o.tiles.coords); if (o.tiles.comp) cb = await gunzip(cb);
-    let db = b64ToBytes(o.tiles.data); if (o.tiles.comp) db = await gunzip(db);
-    const cc = cb.slice(), dd = db.slice(); // tightly packed at offset 0
-    tiles = {
-      coords: new Int32Array(cc.buffer, 0, o.tiles.n * 4),
-      data: new Int16Array(dd.buffer, 0, Math.floor(dd.byteLength / 2)),
-    };
+  if (o.tiles !== undefined && o.tiles !== null) {
+    const n = nonnegativeInt(o.tiles.n, 'tile count');
+    if (n > 0) {
+      let cb = b64ToBytes(o.tiles.coords); if (o.tiles.comp) cb = await gunzip(cb);
+      let db = b64ToBytes(o.tiles.data); if (o.tiles.comp) db = await gunzip(db);
+      exactLength('tile coordinates', cb.byteLength, [n, 4, Int32Array.BYTES_PER_ELEMENT]);
+      exactLength('tile data', db.byteLength, [n, TILE_SAMPLES, Int16Array.BYTES_PER_ELEMENT]);
+      const cc = cb.slice(), dd = db.slice(); // tightly packed at offset 0
+      const coords = new Int32Array(cc.buffer, 0, n * 4);
+      validateTileCoordinates(coords, worldVMax);
+      tiles = {
+        coords,
+        data: new Int16Array(dd.buffer, 0, Math.floor(dd.byteLength / 2)),
+      };
+    }
   }
   return {
-    version: o.version, world: o.world, sea: o.sea, relief: o.relief, view: o.view,
+    version: o.version, world, sea, relief, view,
     vectors: o.vectors ?? { lines: [], labels: [], towns: [] },
-    edit: { w: o.edit.w, h: o.edit.h, height: new Int16Array(height) },
-    biome: { w: o.biome?.w ?? 0, h: o.biome?.h ?? 0, data: bdata },
+    edit: { w: editW, h: editH, height: new Int16Array(height) },
+    biome: { w: biomeW, h: biomeH, data: bdata },
     tiles,
   };
 }

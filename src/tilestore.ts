@@ -4,6 +4,7 @@
 // (no GPU) so it can be unit-tested; the GPU layer (textures, compositing) builds on top.
 
 export const TILE = 256; // texels per tile side
+export const MAX_TILE_LEVEL = 18; // highest level supported by TileLayer and the saved project format
 
 export interface TileCoord { level: number; tx: number; ty: number; }
 
@@ -145,7 +146,7 @@ export class TileRegistry<T> {
     this.map.clear(); this.order.length = 0; this.pinned.clear();
   }
   pin(key: string): void { this.pinned.add(key); }
-  unpin(key: string): void { this.pinned.delete(key); }
+  unpin(key: string): void { this.pinned.delete(key); this.evictExcess(); }
   isPinned(key: string): boolean { return this.pinned.has(key); }
 
   private touch(key: string): void {

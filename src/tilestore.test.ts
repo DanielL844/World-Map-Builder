@@ -185,4 +185,18 @@ describe('TileRegistry LRU', () => {
     expect(r.has('c')).toBe(true);
     expect(evicted).toEqual(['b']);
   });
+
+  it('returns to its capacity as soon as an over-capacity entry is unpinned', () => {
+    const evicted: string[] = [];
+    const r = new TileRegistry<number>(1, (k) => evicted.push(k));
+    r.pin('a'); r.pin('b');
+    r.set('a', 1); r.set('b', 2); // both are protected, so the registry is temporarily over cap
+    expect(r.size).toBe(2);
+
+    r.unpin('a');
+    expect(r.size).toBe(1);
+    expect(r.has('a')).toBe(false);
+    expect(r.has('b')).toBe(true);
+    expect(evicted).toEqual(['a']);
+  });
 });

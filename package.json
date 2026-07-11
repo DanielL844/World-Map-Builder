@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Local GPU-rendered deep-zoom world map builder (Milestone 1: terrain foundation)",
+  "description": "Local GPU-rendered deep-zoom world map builder",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node scripts/generate-sw.mjs",

@@ -6,7 +6,7 @@ html, body {
   touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none;
 }
 #gl { position: fixed; inset: 0; display: block; touch-action: none; }
-.hud { position: fixed; left: env(safe-area-inset-left, 10px); top: calc(env(safe-area-inset-top, 10px) + 6px); z-index: 5; pointer-events: none; }
+.hud { position: fixed; left: calc(env(safe-area-inset-left, 0px) + 10px); top: calc(env(safe-area-inset-top, 0px) + 10px); z-index: 5; pointer-events: none; }
 .hud .readout { background: rgba(11,15,20,.6); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 7px 10px; font-size: 12px; line-height: 1.5; backdrop-filter: blur(6px); }
 .hud .muted { color: #9fe6b0; }
 #hud-coord { color: #8fd0ff; font-weight: 600; }
@@ -19,11 +19,12 @@ html, body {
 .fatal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; background: #0b0f14; color: #ff9b9b; font-size: 15px; z-index: 99; }
 
 /* --- M2: tools --- */
-.topbar { position: fixed; top: calc(env(safe-area-inset-top, 10px) + 6px); right: 10px; display: flex; gap: 6px; z-index: 6; }
+.topbar { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 10px); right: 10px; display: flex; gap: 6px; z-index: 6; }
 .btn { background: rgba(20,27,36,.85); border: 1px solid rgba(255,255,255,.14); color: #e6edf3; border-radius: 10px;
   min-width: 42px; height: 42px; font-size: 17px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0 10px; }
 .btn:active { background: rgba(40,52,68,.95); }
 .btn:disabled { opacity: .4; cursor: default; }
+.btn:focus-visible, .swatch:focus-visible, input:focus-visible { outline: 2px solid #8cc8ff; outline-offset: 2px; }
 .dock { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
   display: flex; gap: 6px; background: rgba(13,18,25,.9); border: 1px solid rgba(255,255,255,.1); border-radius: 14px; padding: 6px; z-index: 6; backdrop-filter: blur(8px); }
 .dock .tool { min-width: 66px; height: 44px; font-size: 13px; border-radius: 10px; }
@@ -37,11 +38,12 @@ html, body {
 .overlay { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
 .dock .sep { width: 1px; align-self: stretch; background: rgba(255,255,255,.14); margin: 4px 3px; }
 .dock .tool { min-width: 58px; }
-.optpanel { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 62px);
-  display: flex; gap: 14px; align-items: center; background: rgba(13,18,25,.9); border: 1px solid rgba(255,255,255,.1);
-  border-radius: 12px; padding: 8px 12px; z-index: 6; backdrop-filter: blur(8px); }
+.option-stack { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 74px);
+  width: calc(100vw - 12px); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 6; pointer-events: none; }
+.optpanel { display: flex; gap: 14px; align-items: center; max-width: 100%; background: rgba(13,18,25,.9);
+  border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 8px 12px; backdrop-filter: blur(8px); pointer-events: auto; }
 .optpanel .optlbl { font-size: 11px; color: #9fb0c3; }
-.swatch { width: 24px; height: 24px; border-radius: 6px; border: 2px solid rgba(255,255,255,.2); cursor: pointer; }
+.swatch { appearance: none; width: 24px; height: 24px; padding: 0; border-radius: 6px; border: 2px solid rgba(255,255,255,.2); cursor: pointer; }
 .swatch.on { border-color: #fff; box-shadow: 0 0 0 2px #4aa3ff; }
 .modal-back { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; padding: 16px; }
 .modal-card { width: min(360px, 94vw); background: #121a24; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 16px; }
@@ -72,7 +74,7 @@ html, body {
 .update-banner .update-button { height: 34px; min-width: 70px; font-size: 13px; border-radius: 8px; background: #1d6fe0; border-color: #4aa3ff; }
 
 /* --- M5: biome palette --- */
-.biomepanel { max-width: min(680px, calc(100vw - 12px)); overflow-x: auto; }
+.biomepanel { max-width: min(680px, calc(100vw - 12px)); overflow-x: auto; touch-action: pan-x; }
 .swatch.erase { background: repeating-linear-gradient(45deg, #444 0 5px, #888 5px 10px); }
 
 /* --- M6: mobile friendliness --- */
@@ -81,14 +83,14 @@ html, body { -webkit-tap-highlight-color: transparent; }
 input[type=range] { accent-color: #4aa3ff; }
 .topbar { right: calc(env(safe-area-inset-right, 0px) + 10px); }
 /* The dock is wider than a phone screen: cap it and let it scroll sideways. */
-.dock { max-width: calc(100vw - 8px); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.dock { max-width: calc(100vw - 8px); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; touch-action: pan-x; }
 .dock::-webkit-scrollbar { display: none; }
 .dock .tool, .dock .sep { flex: 0 0 auto; }
 .optpanel { max-width: calc(100vw - 12px); flex-wrap: wrap; justify-content: center; row-gap: 8px; }
 .biomepanel { flex-wrap: nowrap; }  /* stays a single scrollable row */
 .swatch { flex: 0 0 auto; }
 /* Tall menu must scroll on short screens instead of clipping. */
-.modal-card { max-height: calc(100dvh - 32px); overflow-y: auto; }
+.modal-card { max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
 
 @media (pointer: coarse) {
   .swatch { width: 32px; height: 32px; }
@@ -100,8 +102,12 @@ input[type=range] { accent-color: #4aa3ff; }
   .dock .tool { min-width: 50px; height: 44px; font-size: 12px; }
   .hud .readout { font-size: 11px; padding: 6px 8px; }
   .panel input[type=range], .brushpanel input[type=range], .optpanel input[type=range] { width: 110px; }
-  .brushpanel, .optpanel { bottom: calc(env(safe-area-inset-bottom, 0px) + 74px); }
+  .brushpanel, .option-stack { bottom: calc(env(safe-area-inset-bottom, 0px) + 74px); }
   .update-banner { bottom: calc(env(safe-area-inset-bottom, 0px) + 86px); max-width: calc(100vw - 16px); }
   #toast { max-width: calc(100vw - 24px); }
   #perf { display: none; }
+}
+
+@media (hover: hover) {
+  .btn:not(:disabled):hover { filter: brightness(1.15); }
 }

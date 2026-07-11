@@ -1,5 +1,5 @@
 import {
-  TILE, TileRegistry, tileKey, parseKey, tileRect, visibleTiles, type TileCoord,
+  TILE, MAX_TILE_LEVEL, TileRegistry, tileKey, parseKey, tileRect, visibleTiles, type TileCoord,
   tilesForDab, tileLocalXY, tileLocalRadius, ancestorAt, downsampleIntoQuadrant, upsampleFromAncestor,
 } from './tilestore';
 import { paintDab, growRect, type Rect } from './brush';
@@ -28,6 +28,22 @@ void main() { o = vec4(texture(uTile, vec2(vUv.x, 1.0 - vUv.y)).r, 0.0, 0.0, 1.0
 // `direct` = painted by the user (real content, shown at its level and all deeper zooms).
 // !direct = a propagated downsample (a footprint), shown ONLY at the zoomed-out level it serves.
 interface Tile { tex: WebGLTexture; data: Float32Array; direct: boolean; }
+interface TileState { data: Float32Array; direct: boolean; }
+interface TileAction { key: string; before: TileState; after: TileState; }
+
+// Sample a CPU tile the same way WebGL samples its LINEAR texture. World-to-tile coordinates
+// land on texture edges, while texel centers are at n + 0.5, hence the half-texel shift.
+function sampleTile(data: Float32Array, x: number, y: number): number {
+  const sx = x - 0.5, sy = y - 0.5;
+  const ix = Math.floor(sx), iy = Math.floor(sy), fx = sx - ix, fy = sy - iy;
+  const x0 = Math.max(0, Math.min(TILE - 1, ix));
+  const x1 = Math.max(0, Math.min(TILE - 1, ix + 1));
+  const y0 = Math.max(0, Math.min(TILE - 1, iy));
+  const y1 = Math.max(0, Math.min(TILE - 1, iy + 1));
+  const a = data[y0 * TILE + x0], b = data[y0 * TILE + x1];
+  const c = data[y1 * TILE + x0], d = data[y1 * TILE + x1];
+  return (a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy;
+}
 
 export class TileLayer {
   readonly ok: boolean;
@@ -41,13 +57,13 @@ export class TileLayer {
   private fbo: WebGLFramebuffer | null = null;
   private aw = 0; private ah = 0;
   // deep painting (M7.3)
-  private stroke: Map<string, Float32Array> | null = null;     // key -> before-image for the active stroke
+  private stroke: Map<string, TileState> | null = null;        // key -> before-state for the active stroke
   private dirty = new Map<string, Rect>();                      // key -> texel rect awaiting GPU upload
-  private undoStack: { key: string; before: Float32Array; after: Float32Array }[][] = [];
-  private redoStack: { key: string; before: Float32Array; after: Float32Array }[][] = [];
+  private undoStack: TileAction[][] = [];
+  private redoStack: TileAction[][] = [];
   private maxPaintedLevel = 0;   // deepest level any stroke painted; caps the composite LOD window
 
-  constructor(gl: WebGL2RenderingContext, maxLevel = 18) {
+  constructor(gl: WebGL2RenderingContext, maxLevel = MAX_TILE_LEVEL) {
     this.gl = gl; this.maxLevel = maxLevel;
     this.ok = !!gl.getExtension('EXT_color_buffer_float');
     this.tiles = new TileRegistry<Tile>(400, (_k, t) => gl.deleteTexture(t.tex));
@@ -92,7 +108,11 @@ export class TileLayer {
   private getOrCreate(key: string): Tile {
     let t = this.tiles.get(key);
     if (!t) {
-      t = this.makeTile(); this.tiles.set(key, t); this.tiles.pin(key);
+      t = this.makeTile();
+      // Pin before insertion: set() enforces the registry cap synchronously. If every existing
+      // tile is pinned, inserting first makes the new (temporarily unpinned) tile the only
+      // eviction candidate, leaving us to paint a texture that is no longer registered.
+      this.tiles.pin(key); this.tiles.set(key, t);
       // Seed the new tile with the coarse edit beneath it, so detail built here adds on top of
       // that edit instead of resetting its whole tile footprint back to flat base (= "erasing").
       if (this.seedFromAncestor(parseKey(key), t.data)) {
@@ -107,6 +127,28 @@ export class TileLayer {
       if (a) { upsampleFromAncestor(c, la, a.data, out); return true; }
     }
     return false;
+  }
+
+  // Height at a world point from the requested tile level, falling back to the closest resident
+  // ancestor. This mirrors getOrCreate() seeding and keeps flatten's shared target from snapping
+  // to zero merely because its centre tile has not been instantiated yet.
+  private heightAt(level: number, u: number, v: number, vMax: number): number {
+    const n = 1 << level;
+    const tyMax = Math.max(0, Math.ceil(vMax * n) - 1);
+    const c: TileCoord = {
+      level,
+      tx: Math.max(0, Math.min(n - 1, Math.floor(u * n))),
+      ty: Math.max(0, Math.min(tyMax, Math.floor(v * n))),
+    };
+    for (let l = level; l >= 0; l--) {
+      const a = ancestorAt(c, l);
+      const t = this.tiles.get(tileKey(a));
+      if (t) {
+        const p = tileLocalXY(a, u, v);
+        return sampleTile(t.data, p.x, p.y);
+      }
+    }
+    return 0;
   }
   private ensureAccum(w: number, h: number): void {
     const gl = this.gl;
@@ -180,33 +222,29 @@ export class TileLayer {
   paintHeightDab(tool: ToolId, u: number, v: number, rU: number, amount: number, rate: number, level: number, vMax: number): void {
     if (!this.ok) return;
     const L = level < 0 ? 0 : level > this.maxLevel ? this.maxLevel : level;
-    if (L > this.maxPaintedLevel) this.maxPaintedLevel = L;
     const rLocal = tileLocalRadius(L, rU);
     if (rLocal <= 0) return;
     // 'flatten' pulls toward a single shared target sampled at the dab centre, so it has no seam
     // where the dab spans multiple tiles.
     let flatTarget: number | undefined;
     if (tool === 'flatten') {
-      const n = 1 << L;
-      const cc = { level: L, tx: Math.floor(u * n), ty: Math.floor(v * n) };
-      const ct = this.tiles.get(tileKey(cc));
-      if (ct) {
-        const p = tileLocalXY(cc, u, v);
-        const xi = Math.min(TILE - 1, Math.max(0, Math.round(p.x)));
-        const yi = Math.min(TILE - 1, Math.max(0, Math.round(p.y)));
-        flatTarget = ct.data[yi * TILE + xi];
-      } else {
-        flatTarget = 0;
-      }
+      flatTarget = this.heightAt(L, u, v, vMax);
     }
     for (const c of tilesForDab(L, u, v, rU, vMax)) {
       const key = tileKey(c);
       const t = this.getOrCreate(key);
-      t.direct = true;                           // user-painted -> real content, not a footprint
-      if (this.stroke && !this.stroke.has(key)) this.stroke.set(key, t.data.slice());
+      const before = this.stroke && !this.stroke.has(key) ? { data: t.data.slice(), direct: t.direct } : null;
       const p = tileLocalXY(c, u, v);
-      const rect = paintDab(t.data, TILE, TILE, tool, p.x, p.y, rLocal, amount, rate, flatTarget);
-      if (rect) this.dirty.set(key, growRect(this.dirty.get(key) ?? null, rect.x0, rect.y0, rect.x1, rect.y1));
+      // Convert normalized texture-edge coordinates to the texel-center frame paintDab uses.
+      // At a shared tile edge this puts both adjacent edge texels 0.5 texel from the brush centre,
+      // removing the old one-pixel strength discontinuity.
+      const rect = paintDab(t.data, TILE, TILE, tool, p.x - 0.5, p.y - 0.5, rLocal, amount, rate, flatTarget);
+      if (rect) {
+        t.direct = true;                         // user-painted -> real content, not a footprint
+        if (before && this.stroke) this.stroke.set(key, before);
+        if (L > this.maxPaintedLevel) this.maxPaintedLevel = L;
+        this.dirty.set(key, growRect(this.dirty.get(key) ?? null, rect.x0, rect.y0, rect.x1, rect.y1));
+      }
     }
   }
 
@@ -216,10 +254,10 @@ export class TileLayer {
     if (!s) return false;
     this.propagateDown(s); // keep existing FINER tiles under the stroke in sync (before-images into s)
     this.propagateUp(s);   // build coarse ancestor footprints (records their before-images into s)
-    const entry: { key: string; before: Float32Array; after: Float32Array }[] = [];
+    const entry: TileAction[] = [];
     for (const [key, before] of s) {
       const t = this.tiles.get(key); if (!t) continue;
-      entry.push({ key, before, after: t.data.slice() });
+      entry.push({ key, before, after: { data: t.data.slice(), direct: t.direct } });
     }
     if (entry.length === 0) return false;
     this.undoStack.push(entry);
@@ -233,7 +271,7 @@ export class TileLayer {
   // compositor is finest-level-wins, so a filled ancestor shows whenever its level is the
   // finest one on screen. Records each ancestor's pre-stroke image into `rec` so undo/redo
   // cover them too, and marks them dirty for upload. (M7.4)
-  private propagateUp(rec: Map<string, Float32Array>): void {
+  private propagateUp(rec: Map<string, TileState>): void {
     let current = new Set<string>(rec.keys());   // the painted, finest-level tiles
     while (current.size) {
       const parents = new Set<string>();
@@ -243,7 +281,7 @@ export class TileLayer {
         const child = this.tiles.get(key); if (!child) continue;
         const pkey = tileKey(ancestorAt(c, c.level - 1));
         const parent = this.getOrCreate(pkey);
-        if (!rec.has(pkey)) rec.set(pkey, parent.data.slice());
+        if (!rec.has(pkey)) rec.set(pkey, { data: parent.data.slice(), direct: parent.direct });
         downsampleIntoQuadrant(parent.data, child.data, c.tx & 1, c.ty & 1);
         this.dirty.set(pkey, { x0: 0, y0: 0, x1: TILE - 1, y1: TILE - 1 });
         parents.add(pkey);
@@ -260,14 +298,14 @@ export class TileLayer {
   // depending on zoom. Must run BEFORE propagateUp, while `rec` holds only the painted tiles
   // (their rec entries are pre-stroke images, so data - before = the stroke's increment).
   // Records before-images of every finer tile it touches into `rec` so undo/redo cover them.
-  private propagateDown(rec: Map<string, Float32Array>): void {
+  private propagateDown(rec: Map<string, TileState>): void {
     // The increment this stroke added, per painted tile.
     const inc = new Map<string, { level: number; d: Float32Array }>();
     for (const [key, before] of rec) {
       const t = this.tiles.get(key); if (!t) continue;
       const d = new Float32Array(TILE * TILE);
       let any = false;
-      for (let i = 0; i < d.length; i++) { const x = t.data[i] - before[i]; d[i] = x; if (x !== 0) any = true; }
+      for (let i = 0; i < d.length; i++) { const x = t.data[i] - before.data[i]; d[i] = x; if (x !== 0) any = true; }
       if (any) inc.set(key, { level: parseKey(key).level, d });
     }
     if (inc.size === 0) return;
@@ -278,7 +316,7 @@ export class TileLayer {
         if (c.level <= e.level) continue;                       // only strictly finer tiles
         if (tileKey(ancestorAt(c, e.level)) !== pkey) continue; // only under this painted tile
         const t = this.tiles.get(key); if (!t) continue;
-        if (!rec.has(key)) rec.set(key, t.data.slice());
+        if (!rec.has(key)) rec.set(key, { data: t.data.slice(), direct: t.direct });
         upsampleFromAncestor(c, e.level, e.d, up);
         for (let i = 0; i < up.length; i++) t.data[i] += up[i];
         this.dirty.set(key, { x0: 0, y0: 0, x1: TILE - 1, y1: TILE - 1 });
@@ -290,17 +328,25 @@ export class TileLayer {
   undo(): boolean {
     const e = this.undoStack.pop(); if (!e) return false;
     for (const en of e) this.restoreTile(en.key, en.before);
-    this.redoStack.push(e); return true;
+    this.redoStack.push(e); this.recomputeMaxPaintedLevel(); return true;
   }
   redo(): boolean {
     const e = this.redoStack.pop(); if (!e) return false;
     for (const en of e) this.restoreTile(en.key, en.after);
-    this.undoStack.push(e); return true;
+    this.undoStack.push(e); this.recomputeMaxPaintedLevel(); return true;
   }
-  private restoreTile(key: string, img: Float32Array): void {
+  private restoreTile(key: string, state: TileState): void {
     const t = this.getOrCreate(key);
-    t.data.set(img);
+    t.data.set(state.data); t.direct = state.direct;
     this.dirty.set(key, { x0: 0, y0: 0, x1: TILE - 1, y1: TILE - 1 });
+  }
+  private recomputeMaxPaintedLevel(): void {
+    let max = 0;
+    for (const key of this.tiles.keys()) {
+      const t = this.tiles.get(key);
+      if (t?.direct) max = Math.max(max, parseKey(key).level);
+    }
+    this.maxPaintedLevel = max;
   }
 
   // Upload painted/restored tile rects to the GPU. Call once per frame before composite().
@@ -360,9 +406,9 @@ export class TileLayer {
       const off = i * per;
       for (let j = 0; j < per; j++) t.data[j] = data[off + j] / 16000;
       const key = tileKey({ level, tx, ty });
-      this.tiles.set(key, t); this.tiles.pin(key);
+      this.tiles.pin(key); this.tiles.set(key, t);
       this.dirty.set(key, { x0: 0, y0: 0, x1: TILE - 1, y1: TILE - 1 });
-      if (level > this.maxPaintedLevel) this.maxPaintedLevel = level;
+      if (t.direct && level > this.maxPaintedLevel) this.maxPaintedLevel = level;
     }
   }
 }

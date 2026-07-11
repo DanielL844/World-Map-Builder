@@ -39,4 +39,12 @@ describe('VectorStore', () => {
     expect(s.undo()).toBe(true); expect(s.lines.length).toBe(0);
     expect(s.redo()).toBe(true); expect(s.lines.length).toBe(1);
   });
+  it('creates a detached serialization snapshot', () => {
+    const s = new VectorStore();
+    s.addTown({ u: 0.2, v: 0.3 }, 'Old name', 14);
+    const snapshot = s.toJSON();
+    s.towns[0].name = 'New name'; s.towns[0].at.u = 0.9;
+    expect(snapshot.towns[0].name).toBe('Old name');
+    expect(snapshot.towns[0].at.u).toBe(0.2);
+  });
 });

@@ -18,15 +18,16 @@ export class Menu {
   private wIn: HTMLInputElement;
   private hIn: HTMLInputElement;
   private opts: MenuOptions;
+  private previousFocus: HTMLElement | null = null;
 
   constructor(opts: MenuOptions) {
     this.opts = opts;
     const back = document.createElement('div');
     back.className = 'modal-back'; back.style.display = 'none';
-    back.innerHTML = `<div class="modal-card menu-card">
-      <h3>World size</h3>
-      <div class="menu-row"><label>Width (km)</label><input id="m-w" type="number" min="1" step="any"></div>
-      <div class="menu-row"><label>Height (km)</label><input id="m-h" type="number" min="1" step="any"></div>
+    back.innerHTML = `<div class="modal-card menu-card" role="dialog" aria-modal="true" aria-labelledby="m-title">
+      <h3 id="m-title">World size</h3>
+      <div class="menu-row"><label for="m-w">Width (km)</label><input id="m-w" type="number" min="1" step="any" required></div>
+      <div class="menu-row"><label for="m-h">Height (km)</label><input id="m-h" type="number" min="1" step="any" required></div>
       <div class="menu-actions"><button class="btn apply">Apply size</button></div>
       <h3>Input</h3>
       <div class="menu-row"><label for="m-finger">Draw with one finger (two fingers pan/zoom)</label><input id="m-finger" type="checkbox"></div>
@@ -58,8 +59,17 @@ export class Menu {
     const on = (sel: string, fn: () => void) => (back.querySelector(sel) as HTMLButtonElement).addEventListener('click', fn);
 
     back.addEventListener('pointerdown', (e) => { if (e.target === back) this.close(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.back.style.display !== 'none') { e.preventDefault(); this.close(); }
+    });
     on('.close', () => this.close());
-    on('.apply', () => { const w = parseFloat(this.wIn.value), h = parseFloat(this.hIn.value); if (w > 0 && h > 0) opts.onApplyWorld(w, h); this.close(); });
+    on('.apply', () => {
+      if (!this.wIn.checkValidity()) { this.wIn.reportValidity(); return; }
+      if (!this.hIn.checkValidity()) { this.hIn.reportValidity(); return; }
+      const w = this.wIn.valueAsNumber, h = this.hIn.valueAsNumber;
+      if (!Number.isFinite(w) || !Number.isFinite(h)) return;
+      opts.onApplyWorld(w, h); this.close();
+    });
     on('.save', () => opts.onSave());
     on('.export', () => opts.onExport());
     on('.preset-planet', () => { opts.onPlanet(); this.close(); });
@@ -67,7 +77,9 @@ export class Menu {
     on('.preset-islands', () => { opts.onPreset('islands'); this.close(); });
     on('.preset-flat', () => { opts.onPreset('flat'); this.close(); });
     on('.exportworld', () => opts.onExportWorld());
-    on('.newworld', () => { opts.onNew(); this.close(); });
+    on('.newworld', () => {
+      if (window.confirm('Clear this world? This cannot be undone.')) { opts.onNew(); this.close(); }
+    });
     on('.load', () => file.click());
     file.addEventListener('change', () => { if (file.files && file.files[0]) { opts.onLoad(file.files[0]); file.value = ''; this.close(); } });
   }
@@ -76,7 +88,16 @@ export class Menu {
     const w = this.opts.getWorld();
     this.wIn.value = String(w.widthKm); this.hIn.value = String(w.heightKm);
     (this.back.querySelector('#m-finger') as HTMLInputElement).checked = tools.fingerDraw;
+    this.previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.back.style.display = 'flex';
+    requestAnimationFrame(() => {
+      if (this.back.style.display !== 'none') { this.wIn.focus(); this.wIn.select(); }
+    });
   }
-  close(): void { this.back.style.display = 'none'; }
+  close(): void {
+    if (this.back.style.display === 'none') return;
+    this.back.style.display = 'none';
+    this.previousFocus?.focus({ preventScroll: true });
+    this.previousFocus = null;
+  }
 }

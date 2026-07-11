@@ -83,14 +83,19 @@ src/storage.ts     gzip + project encode/decode + resample + IndexedDB (unit-tes
 src/menu.ts / toolbar.ts / modal.ts / interaction.ts / camera.ts / gl.ts / hud.ts
 scripts/generate-sw.mjs   generates the production service worker after each build
 public/            manifest.webmanifest + icons (PWA)
+world-builder/     Godot 4.7 Steam-first prototype and its detailed roadmap
 ```
 
 ## Verify
 ```
 npm run build   # type-check + production build
-npm test        # 16 unit tests (camera, brush, vectors, storage, biome)
+npm test        # unit tests for camera, painting, terrain, storage, tiles, and vectors
 ```
 
 ## Status
-Core feature set is complete (M1–M6). Possible future work: deeper-than-region raw sculpt resolution
-(tile-pyramid), procedural rivers, biome legend, true cross-device sync. None are required for normal use.
+The browser editor's core feature set is complete, including deep tile-pyramid sculpting. Possible future browser work
+includes procedural rivers, a biome legend, and true cross-device sync.
+
+The repo also contains a separate Godot 4.7 prototype in `world-builder/` aimed at the longer-term Steam builder. Its
+chunked terrain, generation, editing, and save/load foundations are implemented; buildings, roads, bridges, and the
+commercial builder UX are the next phases. See `world-builder/ROADMAP.md` for the detailed plan.

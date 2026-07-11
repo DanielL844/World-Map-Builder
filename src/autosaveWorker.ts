@@ -1,6 +1,7 @@
 // Runs project serialization (quantize + gzip + base64) and the IndexedDB write off the
 // main thread, so auto-save never causes a frame hitch. Buffers are transferred in.
 import { encodeProject, idb, type ProjectData } from './storage';
+import { LatestTaskQueue } from './latestTaskQueue';
 import type { VectorData } from './vectors';
 
 interface SaveMsg {
@@ -14,8 +15,7 @@ interface SaveMsg {
   tiles?: { coords: Int32Array; data: Int16Array };
 }
 
-globalThis.addEventListener('message', (ev: Event) => {
-  const m = (ev as MessageEvent).data as SaveMsg;
+const saves = new LatestTaskQueue<SaveMsg>(async (m) => {
   const n = m.edit.data.length;
   const q = new Int16Array(n);
   for (let i = 0; i < n; i++) {
@@ -28,7 +28,11 @@ globalThis.addEventListener('message', (ev: Event) => {
     biome: { w: m.biome.w, h: m.biome.h, data: m.biome.data },
     tiles: m.tiles,
   };
-  void (async () => {
-    try { await idb.set('autosave', await encodeProject(project)); } catch { /* ignore */ }
-  })();
+  await idb.set('autosave', await encodeProject(project));
+});
+
+globalThis.addEventListener('message', (ev: Event) => {
+  // Coalesce snapshots received while a save is active. Serial writes guarantee that an older,
+  // slower gzip operation cannot overwrite a newer project after the newer save completes.
+  saves.enqueue((ev as MessageEvent).data as SaveMsg);
 });
