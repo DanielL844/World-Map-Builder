@@ -15,10 +15,17 @@ export const BIOMES: Biome[] = [
   { name: 'Swamp',    color: [86, 100, 58] },
 ];
 
+// A coarse height field used to keep biome paint off the water. Sampled by proportion, so it
+// does not need to match the biome field's resolution -- only its aspect (both derive from vMax).
+export interface LandMask { data: Float32Array; w: number; h: number; base: number; sea: number; }
+
 // Soft paint into an RGBA8 field. color=null erases (lowers coverage). Pure + testable.
+// `land`, when given, restricts *painting* to texels at or above sea level; erasing ignores it so
+// generated ice and mistakes stay removable everywhere.
 export function paintBiomeDab(
   data: Uint8Array, W: number, H: number,
   color: [number, number, number] | null, cx: number, cy: number, r: number, strength: number,
+  land?: LandMask,
 ): Rect | null {
   if (W <= 0 || H <= 0 || data.length < W * H * 4 || r <= 0 ||
       !Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(r) ||
@@ -28,11 +35,17 @@ export function paintBiomeDab(
   if (x1 < x0 || y1 < y0) return null;
   const r2 = r * r;
   const opacity = Math.max(0, Math.min(1, strength));
+  const mask = color && land && land.w > 0 && land.h > 0 && land.data.length >= land.w * land.h ? land : null;
   let dx0 = W, dy0 = H, dx1 = -1, dy1 = -1;
   for (let y = y0; y <= y1; y++) {
+    const my = mask ? Math.min(mask.h - 1, Math.floor((y + 0.5) * mask.h / H)) * mask.w : 0;
     for (let x = x0; x <= x1; x++) {
       const dx = x - cx, dy = y - cy, dd = dx * dx + dy * dy;
       if (dd > r2) continue;
+      if (mask) {
+        const mx = Math.min(mask.w - 1, Math.floor((x + 0.5) * mask.w / W));
+        if (mask.base + mask.data[my + mx] < mask.sea) continue; // under water: leave it alone
+      }
       const fall = 1 - Math.sqrt(dd) / r;
       const cov = opacity * fall * fall * (3 - 2 * fall);
       if (cov <= 0) continue;

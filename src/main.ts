@@ -7,7 +7,7 @@ import { Hud } from './hud';
 import { Toolbar } from './toolbar';
 import { EditLayer } from './editlayer';
 import { BiomeLayer } from './biomelayer';
-import { BIOMES } from './biome';
+import { BIOMES, type LandMask } from './biome';
 import { TileLayer } from './tilelayer';
 import { levelForScale, TILE } from './tilestore';
 import { generatePreset, type PresetKind } from './presets';
@@ -30,14 +30,32 @@ const EXPORT_MAX = 4096;
 
 const canvas = document.getElementById('gl') as HTMLCanvasElement;
 const DPR = Math.min(window.devicePixelRatio || 1, 2);
-const IDLE_DPR = Math.min(window.devicePixelRatio || 1, 1.75);
-const MOTION_DPR = Math.min(window.devicePixelRatio || 1, 1.0);
-let dynDPR = IDLE_DPR; // adaptive: low while interacting (smooth), high when idle (crisp)
+
+// Render resolution. Idle frames always run at full DPR, so nothing is ever permanently softer
+// than the display allows. While you drag or paint, resolution only steps down if frames actually
+// miss their budget, and steps back up when they don't -- a fixed drop to 1x made every stroke
+// visibly lose detail on phones even when the GPU had headroom to spare.
+const DPR_LADDER = [1, 0.82, 0.66, 0.52, 0.4];
+const SHED_MS = 21;      // slower than ~48fps: give up some resolution
+const RECOVER_MS = 13;   // faster than ~77fps: take some back
+let dprRung = 0;
+let rungCooldown = 0;
+let interacting = false;
+let dynDPR = DPR;
 let motionTimer = 0;
 function markMoving(): void {
-  dynDPR = MOTION_DPR;
+  interacting = true;
   clearTimeout(motionTimer);
-  motionTimer = window.setTimeout(() => { dynDPR = IDLE_DPR; requestRender(); }, 150);
+  motionTimer = window.setTimeout(() => { interacting = false; requestRender(); }, 200);
+}
+// `gap` is the wall-clock interval since the previous frame: the honest cost of the last one,
+// including GPU time that a JS-side timer cannot see.
+function adaptResolution(gap: number): void {
+  if (!interacting) { dynDPR = DPR; return; }
+  if (rungCooldown > 0) rungCooldown--;
+  else if (gap > SHED_MS && dprRung < DPR_LADDER.length - 1) { dprRung++; rungCooldown = 6; }
+  else if (gap < RECOVER_MS && dprRung > 0) { dprRung--; rungCooldown = 12; }
+  dynDPR = DPR * DPR_LADDER[dprRung];
 }
 
 let gl: WebGL2RenderingContext;
@@ -112,16 +130,26 @@ function detailLevel(): number { return levelForScale(cam.scale * DPR, tileLayer
 // Smallest non-negative level L whose TILE*2^L grid is finer than the live region field.
 // edit.W can shrink on tall worlds or GPUs with a lower MAX_TEXTURE_SIZE.
 function deepMinLevel(): number { return Math.max(0, Math.floor(Math.log2(edit.W / TILE)) + 1); }
+// Strength maps through a square curve rather than a line, and without the old constant floor.
+// The bottom of the slider is now ~7x finer than it was (real control for fine detail) and the
+// top ~2x stronger, so one slider covers roughly a 90x range instead of 7x.
+function heightAmount(pressure: number): number { const s = tools.strength; return (0.0004 + 0.045 * s * s) * pressure; }
+function heightRate(): number { const s = tools.strength; return 0.05 + 0.9 * s * s; }
+function biomeOpacity(pressure: number): number { const s = tools.strength; return (0.02 + 0.98 * s * s) * pressure; }
+
 function stampHeight(u: number, v: number, pressure: number): void {
   const rU = tools.brushPx / cam.scale;
-  const amount = (0.0035 + tools.strength * 0.02) * pressure, rate = 0.12 + tools.strength * 0.5;
+  const amount = heightAmount(pressure), rate = heightRate();
   if (heightTarget === 'tiles') tileLayer.paintHeightDab(tools.tool, u, v, rU, amount, rate, strokeLevel, vMax);
   else edit.dab(tools.tool, u, v, rU, amount, rate);
 }
+// Biome paint is clipped to land: the height field decides, so the brush stops at the waterline
+// instead of colouring the ocean. Erasing passes no mask, so generated ice stays removable.
+function landMask(): LandMask { return { data: edit.fieldRef(), w: edit.W, h: edit.H, base: BASE_LAND, sea: hud.sea }; }
 function stampBiome(u: number, v: number, pressure: number): void {
   const rU = tools.brushPx / cam.scale;
   const color = tools.biome < 0 ? null : BIOMES[tools.biome].color;
-  biome.dab(color, u, v, rU, (0.15 + tools.strength * 0.5) * pressure);
+  biome.dab(color, u, v, rU, biomeOpacity(pressure), color ? landMask() : undefined);
 }
 function interp(p: { u: number; v: number; pressure: number }, fn: (u: number, v: number, pr: number) => void): void {
   const rU = tools.brushPx / cam.scale, step = Math.max(rU * 0.3, 1e-5);
@@ -384,7 +412,8 @@ function frame(): void {
   hud.update(cam, hoverU, hoverV);
   const _t1 = performance.now();
   const _iv = lastFrameT ? _t0 - lastFrameT : 16.7; lastFrameT = _t0;
-  perfEl.textContent = (_t1 - _t0).toFixed(1) + ' ms js \u00b7 ~' + Math.round(1000 / Math.max(_iv, 1)) + ' fps';
+  adaptResolution(_iv);
+  perfEl.textContent = (_t1 - _t0).toFixed(1) + ' ms js \u00b7 ~' + Math.round(1000 / Math.max(_iv, 1)) + ' fps \u00b7 ' + Math.round(dynDPR * 100) + '%';
 }
 function updateCursor(): void { canvas.style.cursor = isDrawTool(tools.tool) ? 'crosshair' : 'grab'; }
 

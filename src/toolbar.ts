@@ -16,6 +16,23 @@ const GROUPS: { id: ToolId; label: string }[][] = [
 ];
 const BORDER_COLORS = ['#ffcf5a', '#ff6b6b', '#6bd1ff', '#9b8cff', '#ffffff', '#1a1a1a'];
 
+// Brush size runs 2..400 screen px on a log scale. A linear slider spends almost all of its travel
+// in sizes you rarely want and makes single-digit brushes impossible to hit on a phone; on a log
+// scale each millimetre of travel is the same *proportional* change, so fine detail is reachable.
+const SIZE_MIN = 2, SIZE_MAX = 400, SIZE_STEPS = 1000;
+export function sliderToSize(v: number): number {
+  const t = Math.max(0, Math.min(1, v / SIZE_STEPS));
+  const px = SIZE_MIN * Math.pow(SIZE_MAX / SIZE_MIN, t);
+  return px < 10 ? Math.round(px * 10) / 10 : Math.round(px);
+}
+export function sizeToSlider(px: number): number {
+  const clamped = Math.max(SIZE_MIN, Math.min(SIZE_MAX, px));
+  return Math.round(SIZE_STEPS * Math.log(clamped / SIZE_MIN) / Math.log(SIZE_MAX / SIZE_MIN));
+}
+// The response curve in main.ts is quadratic, so the slider floor can go much lower than the old
+// 0.05 without the bottom of the travel becoming dead.
+const STRENGTH_MIN = 0.02;
+
 export class Toolbar {
   private undoBtn: HTMLButtonElement;
   private redoBtn: HTMLButtonElement;
@@ -52,11 +69,18 @@ export class Toolbar {
     this.brushPanel = document.createElement('div'); this.brushPanel.className = 'optpanel';
     this.brushPanel.setAttribute('role', 'group'); this.brushPanel.setAttribute('aria-label', 'Brush settings');
     this.brushPanel.innerHTML = `
-      <label>Size <input id="b-size" type="range" min="6" max="160" step="1" value="${tools.brushPx}"></label>
-      <label>Strength <input id="b-str" type="range" min="0.05" max="1" step="0.01" value="${tools.strength}"></label>`;
+      <label>Size <input id="b-size" type="range" min="0" max="1000" step="1" value="${sizeToSlider(tools.brushPx)}"><span id="b-size-v" class="optval"></span></label>
+      <label>Strength <input id="b-str" type="range" min="${STRENGTH_MIN}" max="1" step="0.005" value="${tools.strength}"><span id="b-str-v" class="optval"></span></label>`;
     optionStack.appendChild(this.brushPanel);
-    (this.brushPanel.querySelector('#b-size') as HTMLInputElement).addEventListener('input', (e) => { tools.brushPx = parseFloat((e.target as HTMLInputElement).value); });
-    (this.brushPanel.querySelector('#b-str') as HTMLInputElement).addEventListener('input', (e) => { tools.strength = parseFloat((e.target as HTMLInputElement).value); });
+    const sizeIn = this.brushPanel.querySelector('#b-size') as HTMLInputElement;
+    const strIn = this.brushPanel.querySelector('#b-str') as HTMLInputElement;
+    const sizeOut = this.brushPanel.querySelector('#b-size-v') as HTMLElement;
+    const strOut = this.brushPanel.querySelector('#b-str-v') as HTMLElement;
+    const showSize = () => { sizeOut.textContent = tools.brushPx < 10 ? tools.brushPx.toFixed(1) : String(Math.round(tools.brushPx)); };
+    const showStr = () => { strOut.textContent = Math.round(tools.strength * 100) + '%'; };
+    sizeIn.addEventListener('input', (e) => { tools.brushPx = sliderToSize(parseFloat((e.target as HTMLInputElement).value)); showSize(); });
+    strIn.addEventListener('input', (e) => { tools.strength = parseFloat((e.target as HTMLInputElement).value); showStr(); });
+    showSize(); showStr();
 
     this.borderPanel = document.createElement('div'); this.borderPanel.className = 'optpanel';
     this.borderPanel.setAttribute('role', 'group'); this.borderPanel.setAttribute('aria-label', 'Border color');

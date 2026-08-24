@@ -43,6 +43,7 @@ html, body {
 .optpanel { display: flex; gap: 14px; align-items: center; max-width: 100%; background: rgba(13,18,25,.9);
   border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 8px 12px; backdrop-filter: blur(8px); pointer-events: auto; }
 .optpanel .optlbl { font-size: 11px; color: #9fb0c3; }
+.optpanel .optval { font-size: 11px; color: #8fd0ff; font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
 .swatch { appearance: none; width: 24px; height: 24px; padding: 0; border-radius: 6px; border: 2px solid rgba(255,255,255,.2); cursor: pointer; }
 .swatch.on { border-color: #fff; box-shadow: 0 0 0 2px #4aa3ff; }
 .modal-back { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; padding: 16px; }

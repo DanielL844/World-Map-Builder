@@ -1,4 +1,4 @@
-import { paintBiomeDab, growRect, type Rect } from './biome';
+import { paintBiomeDab, growRect, type Rect, type LandMask } from './biome';
 import { resampleRGBA } from './storage';
 
 // Editable biome-color layer: CPU RGBA8 field synced to a mip-mapped GPU texture.
@@ -47,8 +47,8 @@ export class BiomeLayer {
   private tyOf(v: number): number { return (v / this.vMax) * this.H - 0.5; }
 
   beginStroke(): void { this.before.set(this.data); this.strokeRect = null; }
-  dab(color: [number, number, number] | null, u: number, v: number, rU: number, strength: number): void {
-    const rect = paintBiomeDab(this.data, this.W, this.H, color, this.txOf(u), this.tyOf(v), rU * this.W, strength);
+  dab(color: [number, number, number] | null, u: number, v: number, rU: number, strength: number, land?: LandMask): void {
+    const rect = paintBiomeDab(this.data, this.W, this.H, color, this.txOf(u), this.tyOf(v), rU * this.W, strength, land);
     if (rect) {
       this.dirty = growRect(this.dirty, rect.x0, rect.y0, rect.x1, rect.y1);
       this.strokeRect = growRect(this.strokeRect, rect.x0, rect.y0, rect.x1, rect.y1);

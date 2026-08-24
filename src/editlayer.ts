@@ -54,6 +54,9 @@ export class EditLayer {
   texture(): WebGLTexture { return this.tex; }
   dispose(): void { this.gl.deleteTexture(this.tex); }
 
+  /** The live height field, for read-only sampling (no copy). Do not mutate. */
+  fieldRef(): Float32Array { return this.data; }
+
   setData(src: Float32Array): void {
     this.data.set(src);
     const gl = this.gl;
