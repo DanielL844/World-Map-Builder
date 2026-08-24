@@ -66,11 +66,13 @@ export class Toolbar {
     // Panels share one positioned stack. In particular, the biome tool needs
     // both its brush controls and palette visible without those panels overlapping.
     const optionStack = document.createElement('div'); optionStack.className = 'option-stack';
-    this.brushPanel = document.createElement('div'); this.brushPanel.className = 'optpanel';
+    this.brushPanel = document.createElement('div'); this.brushPanel.className = 'optpanel brushopts';
     this.brushPanel.setAttribute('role', 'group'); this.brushPanel.setAttribute('aria-label', 'Brush settings');
+    // Rows rather than inline labels: on a phone the inline form wrapped and turned two sliders
+    // into a panel taller than the biome palette and tool dock combined.
     this.brushPanel.innerHTML = `
-      <label>Size <input id="b-size" type="range" min="0" max="1000" step="1" value="${sizeToSlider(tools.brushPx)}"><span id="b-size-v" class="optval"></span></label>
-      <label>Strength <input id="b-str" type="range" min="${STRENGTH_MIN}" max="1" step="0.005" value="${tools.strength}"><span id="b-str-v" class="optval"></span></label>`;
+      <div class="brushrow"><span class="optlbl">Size</span><input id="b-size" aria-label="Brush size" type="range" min="0" max="1000" step="1" value="${sizeToSlider(tools.brushPx)}"><span id="b-size-v" class="optval"></span></div>
+      <div class="brushrow"><span class="optlbl">Strength</span><input id="b-str" aria-label="Brush strength" type="range" min="${STRENGTH_MIN}" max="1" step="0.005" value="${tools.strength}"><span id="b-str-v" class="optval"></span></div>`;
     optionStack.appendChild(this.brushPanel);
     const sizeIn = this.brushPanel.querySelector('#b-size') as HTMLInputElement;
     const strIn = this.brushPanel.querySelector('#b-str') as HTMLInputElement;
@@ -95,17 +97,23 @@ export class Toolbar {
 
     this.biomePanel = document.createElement('div'); this.biomePanel.className = 'optpanel biomepanel';
     this.biomePanel.setAttribute('role', 'group'); this.biomePanel.setAttribute('aria-label', 'Biome palette');
-    const erase = document.createElement('button'); erase.type = 'button'; erase.className = 'swatch erase'; erase.title = 'Erase biome';
+    // The eraser used to be the first chip inside the scrolling swatch strip, where it slid off
+    // the left edge on a phone and read as just another colour. It now sits outside the scroller,
+    // always visible, and says what it is.
+    const erase = document.createElement('button'); erase.type = 'button'; erase.className = 'erasechip'; erase.title = 'Erase biome';
     erase.setAttribute('aria-label', 'Erase biome');
+    erase.innerHTML = '<span class="erasesq" aria-hidden="true"></span>Erase';
     erase.addEventListener('click', () => { tools.biome = -1; this.refresh(); });
     this.biomeChips.push(erase); this.biomePanel.appendChild(erase);
+    const strip = document.createElement('div'); strip.className = 'swatchstrip';
     BIOMES.forEach((bi, i) => {
       const s = document.createElement('button'); s.type = 'button'; s.className = 'swatch'; s.title = bi.name;
       s.setAttribute('aria-label', bi.name);
       s.style.background = `rgb(${bi.color[0]},${bi.color[1]},${bi.color[2]})`;
       s.addEventListener('click', () => { tools.biome = i; this.refresh(); });
-      this.biomeChips.push(s); this.biomePanel.appendChild(s);
+      this.biomeChips.push(s); strip.appendChild(s);
     });
+    this.biomePanel.appendChild(strip);
     optionStack.appendChild(this.biomePanel);
     document.body.appendChild(optionStack);
 

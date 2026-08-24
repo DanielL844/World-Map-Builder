@@ -9,7 +9,7 @@ import { EditLayer } from './editlayer';
 import { BiomeLayer } from './biomelayer';
 import { BIOMES, type LandMask } from './biome';
 import { TileLayer } from './tilelayer';
-import { levelForScale, TILE } from './tilestore';
+import { levelForScale, TILE, MAX_TILE_LEVEL } from './tilestore';
 import { generatePreset, type PresetKind } from './presets';
 import { generatePlanet } from './planet';
 import { Overlay } from './overlay';
@@ -83,7 +83,21 @@ let hoverIsTouch = false;
 function brushRingVisible(): boolean {
   return (isBrush(tools.tool) || tools.tool === 'biome') && hoverSX >= 0 && (!hoverIsTouch || drawMode !== 'none');
 }
-const maxScale = 256 * Math.pow(2, 12);
+// Deepest zoom, in px per world-width unit. This used to be a flat 256 * 2^12, which on the
+// default 4000 km world bottomed out at 3.8 m per CSS pixel -- far too coarse to lay out a town.
+// The sparse tile format already stores down to level MAX_TILE_LEVEL (6 cm/texel on a 4000 km
+// world), so the cap is derived from the world instead: zoom until a pixel is about a metre,
+// never past what the format can hold, and never shallower than the old cap on small worlds.
+const TARGET_M_PER_PX = 1;
+const FORMAT_MAX_SCALE = TILE * Math.pow(2, MAX_TILE_LEVEL);
+const LEGACY_MAX_SCALE = 256 * Math.pow(2, 12);
+function maxScaleFor(): number {
+  const metres = WORLD.widthKm * 1000;
+  const wanted = Number.isFinite(metres) && metres > 0 ? metres / TARGET_M_PER_PX : LEGACY_MAX_SCALE;
+  return Math.min(FORMAT_MAX_SCALE, Math.max(LEGACY_MAX_SCALE, wanted));
+}
+/** Ground distance one CSS pixel covers at the current zoom, in metres. */
+function metresPerPixel(): number { return (WORLD.widthKm * 1000) / Math.max(cam.scale, 1e-6); }
 function minimumScale(): number { return Math.min(window.innerWidth, window.innerHeight / vMax) * 0.4; }
 function fit(): void {
   const s = Math.min(window.innerWidth, window.innerHeight / vMax) * 0.9;
@@ -159,7 +173,7 @@ function interp(p: { u: number; v: number; pressure: number }, fn: (u: number, v
 }
 
 attachInteraction(canvas, cam, {
-  minScale: minimumScale, maxScale,
+  minScale: minimumScale, maxScale: maxScaleFor,
   captures: () => isDrawTool(tools.tool),
   fingerDraw: () => tools.fingerDraw,
   onPaintStart: (p) => {
@@ -366,7 +380,7 @@ function download(blob: Blob, name: string): void {
 // ---- render ----
 function clampView(): void {
   const cw = window.innerWidth, ch = window.innerHeight;
-  const scale = clamp(cam.scale, minimumScale(), maxScale);
+  const scale = clamp(cam.scale, minimumScale(), maxScaleFor());
   if (scale !== cam.scale) {
     const center = screenToWorld(cam, cw / 2, ch / 2);
     cam.scale = scale;
@@ -413,7 +427,11 @@ function frame(): void {
   const _t1 = performance.now();
   const _iv = lastFrameT ? _t0 - lastFrameT : 16.7; lastFrameT = _t0;
   adaptResolution(_iv);
-  perfEl.textContent = (_t1 - _t0).toFixed(1) + ' ms js \u00b7 ~' + Math.round(1000 / Math.max(_iv, 1)) + ' fps \u00b7 ' + Math.round(dynDPR * 100) + '%';
+  const mem = tileLayer.stats();
+  const mpp = metresPerPixel();
+  perfEl.textContent = (_t1 - _t0).toFixed(1) + ' ms js \u00b7 ~' + Math.round(1000 / Math.max(_iv, 1)) + ' fps \u00b7 '
+    + Math.round(dynDPR * 100) + '% \u00b7 ' + (mpp < 10 ? mpp.toFixed(2) : Math.round(mpp)) + ' m/px \u00b7 '
+    + mem.tiles + ' tiles ' + Math.round(mem.bytes / (1024 * 1024)) + ' MB';
 }
 function updateCursor(): void { canvas.style.cursor = isDrawTool(tools.tool) ? 'crosshair' : 'grab'; }
 

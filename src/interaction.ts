@@ -4,7 +4,7 @@ export interface PaintInfo { u: number; v: number; pressure: number; }
 
 export interface InteractionOptions {
   minScale: () => number;
-  maxScale: number;
+  maxScale: () => number;
   captures: () => boolean;   // true when a brush tool (not pan) is selected
   fingerDraw: () => boolean;    // allow single-finger touch to paint
   onPaintStart: (p: PaintInfo) => void;
@@ -121,7 +121,7 @@ export function attachInteraction(canvas: HTMLCanvasElement, cam: Camera, opts: 
     if (mode === 'pinch' && pointers.size >= 2 && pinch) {
       const [a, b] = [...pointers.values()];
       const m = mid(a, b);
-      cam.scale = clamp(pinch.s * (dist(a, b) / pinch.d), opts.minScale(), opts.maxScale);
+      cam.scale = clamp(pinch.s * (dist(a, b) / pinch.d), opts.minScale(), opts.maxScale());
       cam.x = m.x - pinch.w.u * cam.scale;
       cam.y = m.y - pinch.w.v * cam.scale;
       opts.onChange();
@@ -161,7 +161,7 @@ export function attachInteraction(canvas: HTMLCanvasElement, cam: Camera, opts: 
     e.preventDefault();
     const p = rel(e);
     const deltaPx = wheelDeltaPixels(e.deltaY, e.deltaMode, canvas.clientHeight);
-    zoomAt(cam, p.x, p.y, Math.exp(-deltaPx * 0.0015), opts.minScale(), opts.maxScale);
+    zoomAt(cam, p.x, p.y, Math.exp(-deltaPx * 0.0015), opts.minScale(), opts.maxScale());
     opts.onChange();
   }, { passive: false });
 

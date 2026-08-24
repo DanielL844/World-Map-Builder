@@ -112,3 +112,31 @@ input[type=range] { accent-color: #4aa3ff; }
 @media (hover: hover) {
   .btn:not(:disabled):hover { filter: brightness(1.15); }
 }
+
+/* --- M8: compact brush options + an eraser you can actually find --- */
+.optpanel.brushopts { flex-direction: column; align-items: stretch; gap: 4px; padding: 6px 10px;
+  width: min(360px, calc(100vw - 16px)); }
+.brushrow { display: flex; align-items: center; gap: 8px; }
+.brushrow .optlbl { flex: 0 0 auto; min-width: 52px; }
+.brushrow input[type=range] { flex: 1 1 auto; width: auto; min-width: 0; }
+.brushrow .optval { flex: 0 0 auto; }
+
+/* The eraser sits outside the scrolling strip so it is always reachable. */
+.biomepanel { gap: 10px; overflow: visible; }
+.swatchstrip { display: flex; gap: 8px; align-items: center; overflow-x: auto; overscroll-behavior-x: contain;
+  scrollbar-width: none; touch-action: pan-x; min-width: 0; }
+.swatchstrip::-webkit-scrollbar { display: none; }
+.erasechip { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px;
+  background: rgba(20,27,36,.85); border: 2px solid rgba(255,255,255,.2); border-radius: 8px;
+  color: #e6edf3; font-size: 12px; cursor: pointer; touch-action: manipulation; }
+.erasechip .erasesq { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(255,255,255,.35);
+  background: repeating-linear-gradient(45deg, #444 0 4px, #888 4px 8px); }
+.erasechip.on { border-color: #fff; box-shadow: 0 0 0 2px #4aa3ff; background: #15324f; }
+.erasechip:focus-visible { outline: 2px solid #8cc8ff; outline-offset: 2px; }
+
+@media (max-width: 700px) {
+  /* Beats the generic `.optpanel input[type=range] { width: 110px }` rule above. */
+  .brushrow input[type=range] { width: auto; }
+  .optpanel.brushopts { padding: 5px 10px; }
+  .brushrow .optlbl { min-width: 48px; font-size: 11px; }
+}

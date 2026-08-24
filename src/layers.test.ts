@@ -132,10 +132,10 @@ describe('TileLayer editing', () => {
     expect(left!.data[127 * TILE + TILE - 1]).toBe(right!.data[127 * TILE]);
   });
 
-  it('pins a tile before a capacity-constrained registry can evict it', () => {
+  it('keeps every loaded tile even when residency is smaller than the tile count', () => {
     const { gl } = makeGl();
     const layer = new TileLayer(gl, 4);
-    (layer as unknown as { tiles: TileRegistry<unknown> }).tiles = new TileRegistry<unknown>(1);
+    (layer as unknown as { hot: TileRegistry<unknown> }).hot = new TileRegistry<unknown>(1);
     const coords = new Int32Array([1, 0, 0, 1, 1, 1, 0, 1]);
     const data = new Int16Array(2 * TILE * TILE).fill(100);
     layer.loadTiles(coords, data);

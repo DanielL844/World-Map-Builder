@@ -32,7 +32,7 @@ function touch(pointerId: number, clientX: number, clientY: number): PointerEven
 function options(overrides: Partial<InteractionOptions> = {}): InteractionOptions {
   return {
     minScale: () => 1,
-    maxScale: 1000,
+    maxScale: () => 1000,
     captures: () => true,
     fingerDraw: () => true,
     onPaintStart: vi.fn(),

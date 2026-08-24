@@ -130,38 +130,48 @@ export function upsampleFromAncestor(c: TileCoord, aLevel: number, aData: Float3
 
 // A least-recently-used registry of tiles. Edited tiles can be pinned so they're never evicted.
 export class TileRegistry<T> {
+  // A Map preserves insertion order, and delete+set moves a key to the end, so the map itself is
+  // the LRU list. The previous implementation kept a parallel array and did indexOf/splice on every
+  // get -- O(n) per lookup, which at deep zoom (hundreds of resident tiles read every frame) turned
+  // into hundreds of thousands of array scans per frame.
   private map = new Map<string, T>();
-  private order: string[] = []; // most-recent at the end
   private pinned = new Set<string>();
   constructor(private cap: number, private onEvict?: (key: string, val: T) => void) {}
 
   has(key: string): boolean { return this.map.has(key); }
-  get(key: string): T | undefined { const v = this.map.get(key); if (v !== undefined) this.touch(key); return v; }
+  /** Look up without marking the entry as recently used. */
+  peek(key: string): T | undefined { return this.map.get(key); }
+  get(key: string): T | undefined {
+    const v = this.map.get(key);
+    if (v !== undefined) { this.map.delete(key); this.map.set(key, v); }
+    return v;
+  }
   get size(): number { return this.map.size; }
+  get capacity(): number { return this.cap; }
   keys(): string[] { return [...this.map.keys()]; }
 
-  set(key: string, val: T): void { this.map.set(key, val); this.touch(key); this.evictExcess(); }
+  set(key: string, val: T): void { this.map.delete(key); this.map.set(key, val); this.evictExcess(); }
+  delete(key: string): void { this.map.delete(key); this.pinned.delete(key); }
   clear(): void {
     if (this.onEvict) for (const [k, v] of this.map) this.onEvict(k, v);
-    this.map.clear(); this.order.length = 0; this.pinned.clear();
+    this.map.clear(); this.pinned.clear();
   }
   pin(key: string): void { this.pinned.add(key); }
   unpin(key: string): void { this.pinned.delete(key); this.evictExcess(); }
+  unpinAll(): void { this.pinned.clear(); this.evictExcess(); }
   isPinned(key: string): boolean { return this.pinned.has(key); }
+  /** Shrink (or grow) the residency budget, evicting straight away if the new cap is smaller. */
+  setCapacity(cap: number): void { this.cap = Math.max(1, Math.floor(cap)); this.evictExcess(); }
 
-  private touch(key: string): void {
-    const i = this.order.indexOf(key);
-    if (i >= 0) this.order.splice(i, 1);
-    this.order.push(key);
-  }
   private evictExcess(): void {
-    let i = 0;
-    while (this.map.size > this.cap && i < this.order.length) {
-      const key = this.order[i];
-      if (this.pinned.has(key)) { i++; continue; }
-      const val = this.map.get(key);
-      this.map.delete(key); this.order.splice(i, 1);
-      if (val !== undefined && this.onEvict) this.onEvict(key, val);
+    if (this.map.size <= this.cap) return;
+    // Map iteration yields least-recently-used first. Deleting during iteration is well defined.
+    for (const key of this.map.keys()) {
+      if (this.map.size <= this.cap) break;
+      if (this.pinned.has(key)) continue;
+      const val = this.map.get(key) as T;
+      this.map.delete(key);
+      if (this.onEvict) this.onEvict(key, val);
     }
   }
 }

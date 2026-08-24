@@ -32,7 +32,7 @@ function pointer(pointerId: number, pointerType: string, clientX: number, client
 function options(overrides: Partial<InteractionOptions> = {}): InteractionOptions {
   return {
     minScale: () => 1,
-    maxScale: 1000,
+    maxScale: () => 1000,
     captures: () => false,
     fingerDraw: () => false,
     onPaintStart: vi.fn(),
