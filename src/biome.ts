@@ -48,7 +48,13 @@ export function paintBiomeDab(
         data[i + 2] = Math.round((color[2] * cov + oldB * oldA * (1 - cov)) / outA);
         data[i + 3] = Math.round(outA * 255);
       } else {
-        data[i + 3] = Math.round(oldA * (1 - cov) * 255);
+        // Subtractive, not multiplicative. Scaling coverage by (1 - cov) only ever approaches
+        // zero: at full strength the centre stalled at alpha 1 and the outer 80% of the brush
+        // kept most of its colour no matter how many passes went over it, so the eraser left a
+        // permanent halo. Flooring the subtraction guarantees every covered texel loses ground
+        // and eventually clears.
+        const next = oldA8 - cov * 255;
+        data[i + 3] = next <= 0 ? 0 : Math.floor(next);
       }
       if (data[i] !== oldR || data[i + 1] !== oldG || data[i + 2] !== oldB || data[i + 3] !== oldA8) {
         if (x < dx0) dx0 = x; if (x > dx1) dx1 = x;

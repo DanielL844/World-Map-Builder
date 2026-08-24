@@ -58,6 +58,13 @@ const vectors = new VectorStore();
 
 const cam: Camera = { x: 0, y: 0, scale: 1 };
 let hoverU = 0.5, hoverV = vMax / 2, hoverSX = -1, hoverSY = -1;
+// A finger has no hover state: the last touch point is wherever it was lifted. Showing the brush
+// ring there makes a pinch or a pan look like it is about to paint, so on touch the ring is only
+// drawn during an actual stroke.
+let hoverIsTouch = false;
+function brushRingVisible(): boolean {
+  return (isBrush(tools.tool) || tools.tool === 'biome') && hoverSX >= 0 && (!hoverIsTouch || drawMode !== 'none');
+}
 const maxScale = 256 * Math.pow(2, 12);
 function minimumScale(): number { return Math.min(window.innerWidth, window.innerHeight / vMax) * 0.4; }
 function fit(): void {
@@ -159,7 +166,7 @@ attachInteraction(canvas, cam, {
     drawMode = 'none'; requestRender();
   },
   onChange: () => { markMoving(); requestRender(); },
-  onHover: (sx, sy) => { hoverSX = sx; hoverSY = sy; const w = screenToWorld(cam, sx, sy); hoverU = w.u; hoverV = w.v; requestOverlay(); },
+  onHover: (sx, sy, kind) => { hoverSX = sx; hoverSY = sy; hoverIsTouch = kind === 'touch'; const w = screenToWorld(cam, sx, sy); hoverU = w.u; hoverV = w.v; requestOverlay(); },
 });
 canvas.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch') { hoverSX = -1; requestRender(); } });
 
@@ -354,7 +361,7 @@ function overlayFrame(): void {
   if (!pendingOverlay) return;
   pendingOverlay = false;
   overlay.resize(window.innerWidth, window.innerHeight, DPR);
-  const showRing = (isBrush(tools.tool) || tools.tool === 'biome') && hoverSX >= 0;
+  const showRing = brushRingVisible();
   overlay.draw(vectors, cam, vMax, WORLD.widthKm, showRing ? { x: hoverSX, y: hoverSY, r: tools.brushPx } : null);
   hud.update(cam, hoverU, hoverV);
 }
@@ -372,7 +379,7 @@ function frame(): void {
   tileLayer.composite(cam.x * dynDPR, cam.y * dynDPR, cam.scale * dynDPR, w, h, vMax, detailLevel());
   gl.viewport(0, 0, w, h);
   terrain.draw([cam.x * dynDPR, cam.y * dynDPR], cam.scale * dynDPR, [w, h], hud.sea, hud.relief, edit.texture(), biome.texture(), vMax, tileLayer.texture(), tileLayer.ok && tileLayer.texture() !== null, BASE_LAND);
-  const showRing = (isBrush(tools.tool) || tools.tool === 'biome') && hoverSX >= 0;
+  const showRing = brushRingVisible();
   overlay.draw(vectors, cam, vMax, WORLD.widthKm, showRing ? { x: hoverSX, y: hoverSY, r: tools.brushPx } : null);
   hud.update(cam, hoverU, hoverV);
   const _t1 = performance.now();

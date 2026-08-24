@@ -11,10 +11,17 @@ export interface InteractionOptions {
   onPaintMove: (p: PaintInfo) => void;
   onPaintEnd: () => void;
   onChange: () => void;         // camera changed
-  onHover: (sx: number, sy: number) => void;
+  onHover: (sx: number, sy: number, pointerType: string) => void;
 }
 
 interface P { x: number; y: number; }
+
+// A single finger can't be told apart from the first finger of a pinch until either it moves or
+// its partner lands. Committing the stroke on pointerdown therefore stamped a dab at the start of
+// every pinch. Touch strokes wait this long (or until the finger travels TOUCH_SLOP_PX) before
+// they start; a second pointer arriving first cancels them outright.
+const TOUCH_HOLD_MS = 110;
+const TOUCH_SLOP_PX = 8;
 
 // Unified input: paint with stylus/mouse when a brush tool is active; navigate otherwise.
 // Two pointers = pinch-zoom. Right/middle mouse or held Space = pan even while a brush is active.
@@ -26,6 +33,7 @@ export function attachInteraction(canvas: HTMLCanvasElement, cam: Camera, opts: 
   let panLast: P = { x: 0, y: 0 };
   let pinch: { d: number; w: { u: number; v: number }; s: number } | null = null;
   let space = false;
+  let pending: { id: number; start: P; pressure: number; timer: ReturnType<typeof setTimeout> } | null = null;
 
   window.addEventListener('keydown', (e) => { if (e.code === 'Space' && !isInteractive(e.target)) { space = true; e.preventDefault(); } });
   window.addEventListener('keyup', (e) => { if (e.code === 'Space') space = false; });
@@ -36,6 +44,24 @@ export function attachInteraction(canvas: HTMLCanvasElement, cam: Camera, opts: 
   const mid = (a: P, b: P): P => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
   const pressureOf = (e: PointerEvent) => (e.pointerType === 'pen' ? (e.pressure > 0 ? e.pressure : 0.5) : 1);
   const toUV = (p: P) => screenToWorld(cam, p.x, p.y);
+
+  // Drop a not-yet-started touch stroke without painting anything.
+  const cancelPending = (): void => {
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pending = null;
+  };
+  // Promote a deferred touch stroke into a real one, anchored at the point it began.
+  const startPending = (): void => {
+    if (!pending) return;
+    const { id, start, pressure } = pending;
+    clearTimeout(pending.timer);
+    pending = null;
+    mode = 'paint'; drawId = id; drawType = 'touch';
+    const uv = toUV(start);
+    opts.onPaintStart({ u: uv.u, v: uv.v, pressure });
+  };
+
   const beginPinch = () => {
     const [a, b] = [...pointers.values()];
     if (!a || !b) { pinch = null; return; }
@@ -50,7 +76,7 @@ export function attachInteraction(canvas: HTMLCanvasElement, cam: Camera, opts: 
     const p = rel(e);
     // palm rejection: ignore touches while a pen is painting
     if (mode === 'paint' && drawType === 'pen' && e.pointerType !== 'pen') return;
-    canvas.setPointerCapture(e.pointerId);
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
     pointers.set(e.pointerId, p);
 
     if (pointers.size >= 2) {
@@ -58,6 +84,8 @@ export function attachInteraction(canvas: HTMLCanvasElement, cam: Camera, opts: 
         opts.onPaintEnd();
         drawId = -1; drawType = '';
       }
+      // The first finger of this pinch has not painted yet — make sure it never does.
+      cancelPending();
       beginPinch();
       return;
     }
@@ -66,7 +94,12 @@ export function attachInteraction(canvas: HTMLCanvasElement, cam: Camera, opts: 
     const canPaint = opts.captures() && !panBtn &&
       (e.pointerType === 'pen' || e.pointerType === 'mouse' || (e.pointerType === 'touch' && opts.fingerDraw()));
 
-    if (canPaint) {
+    if (canPaint && e.pointerType === 'touch') {
+      // Hold the stroke back until we know this isn't the opening finger of a pinch.
+      mode = 'none';
+      cancelPending();
+      pending = { id: e.pointerId, start: p, pressure: pressureOf(e), timer: setTimeout(startPending, TOUCH_HOLD_MS) };
+    } else if (canPaint) {
       mode = 'paint'; drawId = e.pointerId; drawType = e.pointerType;
       const uv = toUV(p);
       opts.onPaintStart({ u: uv.u, v: uv.v, pressure: pressureOf(e) });
@@ -80,6 +113,10 @@ export function attachInteraction(canvas: HTMLCanvasElement, cam: Camera, opts: 
     const has = pointers.has(e.pointerId);
     const p = rel(e);
     if (has) pointers.set(e.pointerId, p);
+
+    // A finger that travels is drawing, not pinching: start the stroke now rather than
+    // waiting out the hold, so deliberate strokes still feel immediate.
+    if (pending && e.pointerId === pending.id && dist(p, pending.start) >= TOUCH_SLOP_PX) startPending();
 
     if (mode === 'pinch' && pointers.size >= 2 && pinch) {
       const [a, b] = [...pointers.values()];
@@ -97,13 +134,18 @@ export function attachInteraction(canvas: HTMLCanvasElement, cam: Camera, opts: 
     }
     // Camera movement above must happen first or the coordinate readout lags a
     // pan by one event (and remains wrong after the pointer is released).
-    opts.onHover(p.x, p.y);
+    opts.onHover(p.x, p.y, e.pointerType);
   });
 
-  const end = (e: PointerEvent) => {
+  const finish = (e: PointerEvent, cancelled: boolean) => {
     // Palm-rejected touches were never tracked. Letting their pointerup enter
     // the state machine would turn an active pen stroke into a pan mid-stroke.
     if (!pointers.has(e.pointerId)) return;
+    if (pending && e.pointerId === pending.id) {
+      // A quick tap that lifts before the hold expires is still a deliberate mark
+      // (one dab, or a label/town placement), so commit it — unless the OS cancelled.
+      if (cancelled) cancelPending(); else startPending();
+    }
     const wasPaint = mode === 'paint' && e.pointerId === drawId;
     pointers.delete(e.pointerId);
     try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
@@ -112,8 +154,8 @@ export function attachInteraction(canvas: HTMLCanvasElement, cam: Camera, opts: 
     else if (pointers.size === 1) { mode = 'pan'; panLast = [...pointers.values()][0]; pinch = null; }
     else if (pointers.size === 0) { mode = 'none'; pinch = null; }
   };
-  canvas.addEventListener('pointerup', end);
-  canvas.addEventListener('pointercancel', end);
+  canvas.addEventListener('pointerup', (e) => finish(e, false));
+  canvas.addEventListener('pointercancel', (e) => finish(e, true));
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();

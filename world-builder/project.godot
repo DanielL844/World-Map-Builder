@@ -35,5 +35,5 @@ enabled=PackedStringArray("res://addons/claudot/plugin.cfg")
 
 [rendering]
 
-rendering_device/driver.windows="d3d12"
+rendering_device/driver.windows="vulkan"
 renderer/rendering_method="mobile"

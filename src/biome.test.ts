@@ -32,3 +32,34 @@ describe('paintBiomeDab', () => {
     expect(d.every((x) => x === 0)).toBe(true);
   });
 });
+
+describe('biome eraser', () => {
+  const W = 64, H = 64;
+  function opaqueField(): Uint8Array {
+    const d = new Uint8Array(W * H * 4);
+    for (let i = 0; i < W * H; i++) { d[i * 4] = 44; d[i * 4 + 1] = 96; d[i * 4 + 2] = 52; d[i * 4 + 3] = 255; }
+    return d;
+  }
+  const alphaAt = (d: Uint8Array, x: number, y: number) => d[(y * W + x) * 4 + 3];
+
+  it('clears coverage completely across the whole brush, not just the centre', () => {
+    const d = opaqueField();
+    const r = 10;
+    // strength as main.ts passes it at the default 0.5 slider
+    for (let pass = 0; pass < 40; pass++) paintBiomeDab(d, W, H, null, 32, 32, r, 0.15 + 0.5 * 0.5);
+    for (let dx = 0; dx <= 8; dx++) {
+      expect(alphaAt(d, 32 + dx, 32), `alpha ${dx} texels from centre`).toBe(0);
+    }
+  });
+
+  it('leaves texels outside the brush untouched', () => {
+    const d = opaqueField();
+    for (let pass = 0; pass < 40; pass++) paintBiomeDab(d, W, H, null, 32, 32, 10, 0.4);
+    expect(alphaAt(d, 32 + 12, 32)).toBe(255);
+  });
+
+  it('reports no dirty rect once there is nothing left to erase', () => {
+    const d = new Uint8Array(W * H * 4); // fully transparent
+    expect(paintBiomeDab(d, W, H, null, 32, 32, 10, 0.5)).toBeNull();
+  });
+});
