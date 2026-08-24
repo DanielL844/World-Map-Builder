@@ -20,8 +20,12 @@ void main() {
 }`;
 const COMP_FS = `#version 300 es
 precision highp float;
+// Samplers default to lowp in GLSL ES 3.00 regardless of the float default above. On a phone that
+// quantised every tile sample on its way into the accumulation buffer, which is what the terrain
+// pass then differences against sea level.
+precision highp sampler2D;
 in vec2 vUv;
-uniform sampler2D uTile;
+uniform highp sampler2D uTile;
 out vec4 o;
 void main() { o = vec4(texture(uTile, vec2(vUv.x, 1.0 - vUv.y)).r, 0.0, 0.0, 1.0); }`;
 

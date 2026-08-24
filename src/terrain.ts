@@ -9,6 +9,12 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
 // an optional cheap relief from the height gradient. Cheap enough for phones.
 const FRAG = `#version 300 es
 precision highp float;
+// GLSL ES 3.00 does NOT give samplers the default float precision: they default to lowp in the
+// fragment shader. Desktop and software GL silently promote everything to highp, so this only
+// bites on phone GPUs -- where the height sampled out of uEdit/uAccum was being quantised to
+// roughly 8 bits. Near sea level that turns a smooth field into plateaus a fraction of a metre
+// apart, and the land/sea test then dithers pixel by pixel: the stippled coastline.
+precision highp sampler2D;
 out vec4 outColor;
 
 uniform vec2  uRes;
@@ -17,10 +23,10 @@ uniform float uScale;
 uniform float uSea;
 uniform float uRelief;     // 0 = flat; higher = subtle shaded relief from drawn height
 uniform float uBaseLand;   // default flat-plain height (blank canvas)
-uniform sampler2D uEdit;   // region-scale height edits / baked presets
+uniform highp sampler2D uEdit;   // region-scale height edits / baked presets
 uniform float uVMax;
-uniform sampler2D uBiome;   // painted biome color (rgb) + coverage (a)
-uniform sampler2D uAccum;   // composited deep tile edits (screen-space)
+uniform highp sampler2D uBiome;   // painted biome color (rgb) + coverage (a)
+uniform highp sampler2D uAccum;   // composited deep tile edits (screen-space)
 uniform float uHasAccum;
 
 vec3 landColor(float e) {
@@ -60,21 +66,32 @@ void main() {
   float eS = clamp(uBaseLand + ed, 0.0, 1.0);          // smooth region base (no deep tiles)
   float e  = clamp(eS + edTiles, 0.0, 1.0);            // + deep-tile detail (drives color + land/sea)
 
-  vec3 col;
-  if (e < uSea) {
-    col = seaColor(e);
-    col = mix(col, bio.rgb, bio.a);                    // frozen sea ice (biome painted on polar ocean)
-  } else {
-    col = landColor(e);
-    col = mix(col, bio.rgb, bio.a);                    // biome paint overrides the color
-    if (uRelief > 0.001) {                             // relief from the SMOOTH base only, so deep-tile
-      float slope = clamp((dFdx(eS) + dFdy(eS)) * 6.0, -0.6, 0.6); // boundaries don't cast hard hillshade lines
-      col *= clamp(0.85 + slope * uRelief, 0.6, 1.05);
-    }
-    float coast = smoothstep(0.0, 0.004, e - uSea);    // crisp, lighter coastline
-    col = mix(vec3(0.42, 0.37, 0.28), col, coast * 0.6 + 0.4);
+  // Height above sea level, and how much it changes across one pixel. Everything below is phrased
+  // in terms of these two so the shoreline behaves the same at 40 km/px and at 1 m/px.
+  float d = e - uSea;
+  float aa = max(fwidth(d), 1e-7);
+
+  vec3 sea = seaColor(e);
+  sea = mix(sea, bio.rgb, bio.a);                      // frozen sea ice (biome painted on polar ocean)
+
+  vec3 ground = landColor(e);
+  ground = mix(ground, bio.rgb, bio.a);                // biome paint overrides the color
+  if (uRelief > 0.001) {                               // relief from the SMOOTH base only, so deep-tile
+    float slope = clamp((dFdx(eS) + dFdy(eS)) * 6.0, -0.6, 0.6); // boundaries don't cast hard hillshade lines
+    ground *= clamp(0.85 + slope * uRelief, 0.6, 1.05);
   }
-  outColor = vec4(col, 1.0);
+  // Darker sand at the water's edge. A fixed 0.004 height band is a few pixels when zoomed out but
+  // swallows the whole screen once a pixel is metres wide, which is why zoomed-in land went flat and
+  // colourless. Track the pixel footprint instead, and never exceed the old width.
+  float coast = smoothstep(0.0, clamp(aa * 2.5, 0.00015, 0.004), d);
+  ground = mix(vec3(0.42, 0.37, 0.28), ground, coast * 0.6 + 0.4);
+
+  // Analytic antialiasing of the waterline. A hard if (e < uSea) test is one sample per pixel, so any
+  // wobble in the height -- filtering, quantisation, the deep-tile blur -- flips whole pixels
+  // between sea and land and stipples the coast. Blending over one pixel of height change gives a
+  // smooth edge at every zoom and turns residual noise into a soft rim instead of speckle.
+  float land = smoothstep(-aa, aa, d);
+  outColor = vec4(mix(sea, ground, land), 1.0);
 }`;
 
 export class Terrain {

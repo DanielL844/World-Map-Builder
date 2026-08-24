@@ -46,7 +46,7 @@ let motionTimer = 0;
 function markMoving(): void {
   interacting = true;
   clearTimeout(motionTimer);
-  motionTimer = window.setTimeout(() => { interacting = false; requestRender(); }, 200);
+  motionTimer = window.setTimeout(() => { interacting = false; dynDPR = DPR; requestRender(); }, 200);
 }
 // `gap` is the wall-clock interval since the previous frame: the honest cost of the last one,
 // including GPU time that a JS-side timer cannot see.
@@ -397,6 +397,8 @@ perfEl.id = 'perf';
 perfEl.style.cssText ='position:fixed;left:10px;bottom:10px;z-index:7;background:rgba(11,15,20,.6);border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:3px 8px;font:11px ui-monospace,monospace;color:#9fe6b0;pointer-events:none';
 document.body.appendChild(perfEl);
 function requestRender(): void { pendingOverlay = false; if (!pending) { pending = true; requestAnimationFrame(frame); } }
+// Ask for one more frame from inside frame(), after `pending` has been cleared for this one.
+function requestRenderSoon(): void { queueMicrotask(requestRender); }
 let pendingOverlay = false;
 function requestOverlay(): void { if (pending || pendingOverlay) return; pendingOverlay = true; requestAnimationFrame(overlayFrame); }
 function overlayFrame(): void {
@@ -409,6 +411,15 @@ function overlayFrame(): void {
 }
 function frame(): void {
   const _t0 = performance.now();
+  // Resolution is chosen from the previous frame's cost BEFORE this one is sized and drawn.
+  // Doing it at the end meant the first frame after an interaction still used the reduced
+  // resolution and nothing asked for another one, so the view stayed soft until you touched it
+  // again -- the "detail never comes back" symptom.
+  const _gap = lastFrameT ? _t0 - lastFrameT : 16.7;
+  lastFrameT = _t0;
+  const _prevDPR = dynDPR;
+  adaptResolution(_gap);
+  if (dynDPR !== _prevDPR) requestRenderSoon();
   pending = false; clampView();
   if (hoverSX >= 0) {
     const hover = screenToWorld(cam, hoverSX, hoverSY);
@@ -425,11 +436,9 @@ function frame(): void {
   overlay.draw(vectors, cam, vMax, WORLD.widthKm, showRing ? { x: hoverSX, y: hoverSY, r: tools.brushPx } : null);
   hud.update(cam, hoverU, hoverV);
   const _t1 = performance.now();
-  const _iv = lastFrameT ? _t0 - lastFrameT : 16.7; lastFrameT = _t0;
-  adaptResolution(_iv);
   const mem = tileLayer.stats();
   const mpp = metresPerPixel();
-  perfEl.textContent = (_t1 - _t0).toFixed(1) + ' ms js \u00b7 ~' + Math.round(1000 / Math.max(_iv, 1)) + ' fps \u00b7 '
+  perfEl.textContent = (_t1 - _t0).toFixed(1) + ' ms js \u00b7 ~' + Math.round(1000 / Math.max(_gap, 1)) + ' fps \u00b7 '
     + Math.round(dynDPR * 100) + '% \u00b7 ' + (mpp < 10 ? mpp.toFixed(2) : Math.round(mpp)) + ' m/px \u00b7 '
     + mem.tiles + ' tiles ' + Math.round(mem.bytes / (1024 * 1024)) + ' MB';
 }
