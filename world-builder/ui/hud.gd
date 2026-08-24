@@ -26,7 +26,7 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	if camera == null or world == null:
+	if camera == null or world == null or _label == null:
 		return
 	var cfg := world.config
 	var c := camera.get_screen_center_position()

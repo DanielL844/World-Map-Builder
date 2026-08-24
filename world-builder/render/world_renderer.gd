@@ -25,6 +25,15 @@ func setup(target_world: World) -> void:
 
 
 func _build_tilemap() -> void:
+	# setup() is re-entrant (loading a world calls it again), so drop any layer
+	# from a previous call first — otherwise the old one stays parented and keeps
+	# drawing stale tiles on top of the new world.
+	if is_instance_valid(_layer):
+		remove_child(_layer)
+		_layer.queue_free()
+	_layer = null
+	_source_id = -1
+
 	var cfg := world.config
 
 	var tileset := TileSet.new()
@@ -39,12 +48,16 @@ func _build_tilemap() -> void:
 
 	_layer = TileMapLayer.new()
 	_layer.tile_set = tileset
+	# The atlas packs every tile colour into one row, so the project-default
+	# linear filter samples neighbouring swatches at the region edges and paints
+	# coloured seams between tiles. Point sampling keeps each tile flat.
+	_layer.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	add_child(_layer)
 
 
 ## Build a 1-row atlas: one solid-colour tile per type, side by side.
 func _make_atlas_texture(tile_size: int) -> ImageTexture:
-	var img := Image.create(TileTypes.COUNT * tile_size, tile_size, false, Image.FORMAT_RGBA8)
+	var img := Image.create_empty(TileTypes.COUNT * tile_size, tile_size, false, Image.FORMAT_RGBA8)
 	for i in TileTypes.COUNT:
 		img.fill_rect(Rect2i(i * tile_size, 0, tile_size, tile_size), TileTypes.COLORS[i])
 	return ImageTexture.create_from_image(img)
@@ -89,6 +102,8 @@ func _render_chunk(coord: Vector2i) -> void:
 	for ly in cs:
 		for lx in cs:
 			var id := chunk.get_tile(lx, ly)
+			if id < 0 or id >= TileTypes.COUNT:
+				id = TileTypes.Type.DEEP_WATER
 			_layer.set_cell(Vector2i(base.x + lx, base.y + ly), _source_id, Vector2i(id, 0))
 
 

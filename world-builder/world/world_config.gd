@@ -34,3 +34,8 @@ func chunk_count() -> int:
 ## True if the given chunk coordinate is inside the bounded world.
 func is_valid_chunk(c: Vector2i) -> bool:
 	return c.x >= 0 and c.y >= 0 and c.x < world_chunks.x and c.y < world_chunks.y
+
+
+## Total world extent in pixels.
+func world_pixels() -> Vector2:
+	return Vector2(world_tiles()) * float(tile_size)
