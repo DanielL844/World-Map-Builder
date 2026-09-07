@@ -24,10 +24,33 @@ uniform float uSea;
 uniform float uRelief;     // 0 = flat; higher = subtle shaded relief from drawn height
 uniform float uBaseLand;   // default flat-plain height (blank canvas)
 uniform highp sampler2D uEdit;   // region-scale height edits / baked presets
+uniform vec2  uEditSize;   // uEdit dimensions in texels
 uniform float uVMax;
 uniform highp sampler2D uBiome;   // painted biome color (rgb) + coverage (a)
 uniform highp sampler2D uAccum;   // composited deep tile edits (screen-space)
 uniform float uHasAccum;
+
+// THE stippled coastline, take two. Declaring the sampler highp was not enough: hardware bilinear
+// filtering on most mobile GPUs is carried out at the TEXTURE's precision, and the height field is
+// R16F. Near sea level (stored height ~ -0.08) one fp16 step is ~6e-5, and the edit texture is
+// 4096 texels across a 40000 km world -- about 270 screen pixels per texel at 36 m/px. So instead
+// of a ramp between texels the shader gets fp16 plateaus tens of pixels wide, and testing those
+// against sea level speckles the coast along the plateau contours. Desktop GL filters at fp32,
+// which is exactly why this was never reproducible off the phone.
+// Fix: do the bilinear lerp ourselves in highp from exact texel values. Only when magnifying --
+// when the texture is minified we still want the hardware mip chain.
+float fetchR(highp sampler2D t, ivec2 c, ivec2 sz) {
+  return texelFetch(t, clamp(c, ivec2(0), sz - ivec2(1)), 0).r;
+}
+float sampleHeight(highp sampler2D t, vec2 uv, vec2 size, float texelsPerPixel) {
+  if (texelsPerPixel >= 1.0) return texture(t, uv).r;
+  vec2 p = uv * size - 0.5;
+  vec2 f = fract(p);
+  ivec2 i = ivec2(floor(p)), sz = ivec2(size);
+  float a = mix(fetchR(t, i, sz),                fetchR(t, i + ivec2(1, 0), sz), f.x);
+  float b = mix(fetchR(t, i + ivec2(0, 1), sz),  fetchR(t, i + ivec2(1, 1), sz), f.x);
+  return mix(a, b, f.y);
+}
 
 vec3 landColor(float e) {
   float t = clamp((e - uSea) / max(1.0 - uSea, 0.001), 0.0, 1.0);
@@ -48,7 +71,7 @@ void main() {
   vec2 w = (scr - uOrigin) / uScale;
   vec2 euv = vec2(w.x, w.y / uVMax);
   bool inDom = euv.x >= 0.0 && euv.x <= 1.0 && euv.y >= 0.0 && euv.y <= 1.0;
-  float ed = inDom ? texture(uEdit, euv).r : 0.0;
+  float ed = inDom ? sampleHeight(uEdit, euv, uEditSize, uEditSize.x / max(uScale, 1e-6)) : 0.0;
   vec4 bio = inDom ? texture(uBiome, euv) : vec4(0.0);
   // Deep-tile edits (M7), blurred in screen space so tile / LOD / coverage boundaries don't
   // show as hard seams when zoomed out (9-tap gaussian over the screen-space accum).
@@ -117,13 +140,15 @@ export class Terrain {
     this.u = {
       res: loc('uRes'), origin: loc('uOrigin'), scale: loc('uScale'), sea: loc('uSea'),
       relief: loc('uRelief'), baseLand: loc('uBaseLand'), edit: loc('uEdit'), vmax: loc('uVMax'),
+      editSize: loc('uEditSize'),
       biomeTex: loc('uBiome'), accum: loc('uAccum'), hasAccum: loc('uHasAccum'),
     };
   }
 
   draw(origin: [number, number], scale: number, res: [number, number], sea: number, relief: number,
        editTex: WebGLTexture, biomeTex: WebGLTexture, vMax: number,
-       accumTex: WebGLTexture | null, hasAccum: boolean, baseLand: number): void {
+       accumTex: WebGLTexture | null, hasAccum: boolean, baseLand: number,
+       editSize: [number, number]): void {
     const gl = this.gl;
     gl.useProgram(this.prog);
     gl.bindVertexArray(this.vao);
@@ -139,6 +164,7 @@ export class Terrain {
     gl.uniform1f(this.u.relief, relief);
     gl.uniform1f(this.u.baseLand, baseLand);
     gl.uniform1f(this.u.vmax, vMax);
+    gl.uniform2f(this.u.editSize, editSize[0], editSize[1]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
   }

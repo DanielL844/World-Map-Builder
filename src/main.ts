@@ -358,7 +358,7 @@ function exportWorldPNG(): void {
   // composite redirects the viewport to its accum FBO, so point it back at the canvas after.
   tileLayer.composite(0, 0, ew, ew, eh, vMax, levelForScale(ew, tileLayer.maxLevel));
   gl.viewport(0, 0, ew, eh);
-  terrain.draw([0, 0], ew, [ew, eh], hud.sea, hud.relief, edit.texture(), biome.texture(), vMax, tileLayer.texture(), tileLayer.ok && tileLayer.texture() !== null, BASE_LAND);
+  terrain.draw([0, 0], ew, [ew, eh], hud.sea, hud.relief, edit.texture(), biome.texture(), vMax, tileLayer.texture(), tileLayer.ok && tileLayer.texture() !== null, BASE_LAND, [edit.W, edit.H]);
   const out = document.createElement('canvas'); out.width = ew; out.height = eh;
   const c = out.getContext('2d');
   if (c) {
@@ -431,7 +431,7 @@ function frame(): void {
   edit.flush(); biome.flush(); tileLayer.flush();
   tileLayer.composite(cam.x * dynDPR, cam.y * dynDPR, cam.scale * dynDPR, w, h, vMax, detailLevel());
   gl.viewport(0, 0, w, h);
-  terrain.draw([cam.x * dynDPR, cam.y * dynDPR], cam.scale * dynDPR, [w, h], hud.sea, hud.relief, edit.texture(), biome.texture(), vMax, tileLayer.texture(), tileLayer.ok && tileLayer.texture() !== null, BASE_LAND);
+  terrain.draw([cam.x * dynDPR, cam.y * dynDPR], cam.scale * dynDPR, [w, h], hud.sea, hud.relief, edit.texture(), biome.texture(), vMax, tileLayer.texture(), tileLayer.ok && tileLayer.texture() !== null, BASE_LAND, [edit.W, edit.H]);
   const showRing = brushRingVisible();
   overlay.draw(vectors, cam, vMax, WORLD.widthKm, showRing ? { x: hoverSX, y: hoverSY, r: tools.brushPx } : null);
   hud.update(cam, hoverU, hoverV);

@@ -38,12 +38,17 @@ export class EditLayer {
     this.before = new Float32Array(this.W * this.H);
     // R16F needs EXT_color_buffer_float to be mip-mappable; degrade gracefully without it.
     this.mipmaps = !!gl.getExtension('EXT_color_buffer_float');
+    // Store the field at full float where the GPU can filter and mip it. fp16 only has ~6e-5 of
+    // resolution at the heights around sea level, which is coarser than the whole coastal shading
+    // band -- the terrain shader lerps in highp regardless, but this also removes the quantisation
+    // of the stored texel values themselves.
+    const fmt = (this.mipmaps && gl.getExtension('OES_texture_float_linear')) ? gl.R32F : gl.R16F;
 
     const tex = gl.createTexture();
     if (!tex) throw new Error('createTexture failed');
     this.tex = tex;
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, this.W, this.H, 0, gl.RED, gl.FLOAT, this.data);
+    gl.texImage2D(gl.TEXTURE_2D, 0, fmt, this.W, this.H, 0, gl.RED, gl.FLOAT, this.data);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, this.mipmaps ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);

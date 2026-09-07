@@ -26,8 +26,19 @@ precision highp float;
 precision highp sampler2D;
 in vec2 vUv;
 uniform highp sampler2D uTile;
+uniform vec2 uTileSize;
 out vec4 o;
-void main() { o = vec4(texture(uTile, vec2(vUv.x, 1.0 - vUv.y)).r, 0.0, 0.0, 1.0); }`;
+// Tiles are only ever magnified into the accum, so hardware bilinear on an R16F tile has the same
+// fp16-plateau problem as the region field (see terrain.ts). Lerp in highp from exact texels.
+float fetchR(ivec2 c, ivec2 sz) { return texelFetch(uTile, clamp(c, ivec2(0), sz - ivec2(1)), 0).r; }
+void main() {
+  vec2 p = vec2(vUv.x, 1.0 - vUv.y) * uTileSize - 0.5;
+  vec2 f = fract(p);
+  ivec2 i = ivec2(floor(p)), sz = ivec2(uTileSize);
+  float a = mix(fetchR(i, sz),               fetchR(i + ivec2(1, 0), sz), f.x);
+  float b = mix(fetchR(i + ivec2(0, 1), sz), fetchR(i + ivec2(1, 1), sz), f.x);
+  o = vec4(mix(a, b, f.y), 0.0, 0.0, 1.0);
+}`;
 
 // Quantisation scale for stored heights. Matches EditLayer.serialize and the saved project format,
 // so demoting a tile to its compact form loses nothing that would have survived a save anyway.
@@ -135,7 +146,7 @@ export class TileLayer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
-    this.loc = { rect: gl.getUniformLocation(this.prog, 'uRect'), res: gl.getUniformLocation(this.prog, 'uRes'), tile: gl.getUniformLocation(this.prog, 'uTile') };
+    this.loc = { rect: gl.getUniformLocation(this.prog, 'uRect'), res: gl.getUniformLocation(this.prog, 'uRes'), tile: gl.getUniformLocation(this.prog, 'uTile'), tileSize: gl.getUniformLocation(this.prog, 'uTileSize') };
   }
 
   texture(): WebGLTexture | null { return this.accumTex; }
@@ -301,7 +312,8 @@ export class TileLayer {
     gl.disable(gl.BLEND);
     gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.prog); gl.bindVertexArray(this.vao);
-    gl.uniform2f(this.loc.res, w, h); gl.uniform1i(this.loc.tile, 0); gl.activeTexture(gl.TEXTURE0);
+    gl.uniform2f(this.loc.res, w, h); gl.uniform1i(this.loc.tile, 0);
+    gl.uniform2f(this.loc.tileSize, TILE, TILE); gl.activeTexture(gl.TEXTURE0);
     const Dv = topLevel < 0 ? 0 : topLevel > this.maxLevel ? this.maxLevel : topLevel;
     const top = Math.min(Dv, this.maxPaintedLevel);   // nothing painted finer than this; just a perf cap
     const uMin = (0 - camX) / scale, uMax = (w - camX) / scale;

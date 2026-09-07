@@ -2,6 +2,10 @@
 export function createGL(canvas: HTMLCanvasElement): WebGL2RenderingContext {
   const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
   if (!gl) throw new Error('WebGL2 is not supported by this browser or GPU.');
+  // GL_DITHER is ON by default. On phones whose default framebuffer is RGB565 the driver then
+  // ordered-dithers every slow gradient -- including the antialiased waterline -- into speckle.
+  // Nothing here relies on dithering, so turn it off everywhere.
+  gl.disable(gl.DITHER);
   return gl;
 }
 
